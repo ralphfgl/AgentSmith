@@ -1,3 +1,15 @@
+# *************************************************************************** #
+#                                                                             #
+#                                                        :::      ::::::::    #
+#    models.py                                         :+:      :+:    :+:    #
+#                                                    +:+ +:+         +:+      #
+#    By: rfeghali <rfeghali@learner.42.tech>       +#+  +:+       +#+         #
+#                                                +#+#+#+#+#+   +#+            #
+#    Created: 2026/09/21 14:06:27 by rfeghali         #+#    #+#              #
+#    Updated: 2026/09/21 14:07:09 by rfeghali        ###   ########.fr        #
+#                                                                             #
+# *************************************************************************** #
+
 """Models."""
 
 from typing import List, Optional
@@ -103,3 +115,79 @@ class SolutionOutput(BaseModel):
         default_factory=lambda: datetime.now().isoformat(),
         description="ISO 8601 timestamp of when the solution was produced",
     )
+
+
+class SandboxConfig(BaseModel):
+    """Sandbox configuration for student solutions.
+    Uses allowlist approach: only imports in authorized_imports are allowed.
+    Everything else is blocked by default.
+    """
+
+    authorized_imports: List[str] = Field(
+        default_factory=lambda: [
+            "math",
+            "math.*",
+            "collections",
+            "collections.*",
+            "itertools",
+            "re",
+            "json",
+            "typing",
+            "typing.*",
+            "functools",
+            "operator",
+            "heapq",
+            "bisect",
+            "copy",
+            "string",
+            "random",
+            "datetime",
+            "datetime.*",
+            "array",
+            "cmath",
+        ]
+    )
+    allowed_directories: List[str] = Field(
+        default_factory=lambda: ["/testbed", "/tmp/agent"]
+    )
+    max_execution_time_seconds: int = 30
+    max_memory_mb: int = 512
+
+
+class SWEBenchTaskInput(BaseModel):
+    """Input for a SWE-bench task, provided by the moulinette.
+    Your agent receives this and must produce a git patch that fixes the
+    issue.
+    """
+
+    instance_id: str = Field(
+        ...,
+        description="SWE-bench instance identifier (e.g., 'sympy__sympy-23534')",
+    )
+    problem_statement: str = Field(
+        ..., description="The GitHub issue description, what needs to be fixed"
+    )
+    docker_image: str = Field(
+        ...,
+        description="Full Docker image name to pull (e.g., 'swebench/sweb.eval.x86_64.sympy_1776_sympy-23534: latest')",
+    )
+    eval_script: str = Field(
+        ...,
+        description="Bash script to run inside the container to evaluate the patch",
+    )
+    hints_text: str = Field(
+        default="", description="Optional hints about the issue (may be empty)"
+    )
+    repo: str = Field(
+        default="", description="Repository name (e.g., 'sympy/sympy')"
+    )
+
+
+class MBPPTaskInput(BaseModel):
+    """Input for MBPP task evaluation."""
+
+    task_id: int
+    task_definition: str
+    function_definition: str
+    test_imports: List[str] = Field(default_factory=list)
+    test_list: List[str] = Field(default_factory=list)
