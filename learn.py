@@ -118,11 +118,11 @@
 # print(f"capture err: {captured_stderr.strip()}")
 
 # create mutable buffer of bytes
-data = bytearray(b"abcdefghijklmnopqrstuvwxyz")
-# wrap it in a memory view
-view = memoryview(data)
-# slice the view (this do not duplicate the memory in RAM)
-middle_slice = view[10:15]
-# because its a view, mutating the slice mutates the original
-middle_slice[0] = ord("X")
-print(data)
+# data = bytearray(b"abcdefghijklmnopqrstuvwxyz")
+# # wrap it in a memory view
+# view = memoryview(data)
+# # slice the view (this do not duplicate the memory in RAM)
+# middle_slice = view[10:15]
+# # because its a view, mutating the slice mutates the original
+# middle_slice[0] = ord("X")
+# print(data)

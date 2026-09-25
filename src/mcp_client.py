@@ -1,0 +1,15 @@
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+import asyncio
+
+server_params = StdioServerParameters(
+    command="python",
+    args=["mpc_tools_swebench.py"],
+    env={"TESTBED_PATH": "/testbed"},
+)
+
+
+async def run_sandbox_server():
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()  # requires handshake
