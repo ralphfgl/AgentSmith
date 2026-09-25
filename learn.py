@@ -126,3 +126,48 @@
 # # because its a view, mutating the slice mutates the original
 # middle_slice[0] = ord("X")
 # print(data)
+
+# create custom context manager
+from contextlib import contextmanager
+import time
+
+
+@contextmanager
+def timer_context():
+    # 1. setup when entering the context
+    start_time = time.time()
+    print("timer started")
+    try:
+        # 2. hand over control to the 'with' block
+        yield
+    finally:
+        # 3. teardown
+        end_time = time.time()
+        print(f"timer stoped {end_time - start_time}")
+
+
+with timer_context():
+    print("doing some work")
+    time.sleep(1.5)
+
+
+# using a class, implementing __enter__ and __exit__
+class DatabaseConnection:
+    def __init__(self, db_name):
+        self.db_name = db_name
+
+    def __enter__(self):
+        # 1. setup: open connection and return ressource
+        print(f" Connection to database {self.db_name}")
+        return self  # this is what goes in the 'as' var
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # 2. teardown: close the conn
+        print(f"closing the conneciton")
+        if exc_type:
+            print(f"an error occured")
+        return False  # to let python raise the error normally or true to suppress it
+
+
+with DatabaseConnection("production_db") as db:
+    print("fetching data")
