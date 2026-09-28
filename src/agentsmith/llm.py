@@ -7,8 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import requests  # <-- Replaces urllib
-from agent_smith.models import LLMResponse
+import requests
+from src.models import LLMResponse
 
 
 def approximate_tokens(text: str) -> int:
@@ -56,10 +56,7 @@ class LLMClient:
                 "provider_url and model_name are required for LLM calls"
             )
         if not self.config.api_keys:
-            raise RuntimeError(
-                "No API key found. Set OPENROUTER_API_KEY, OPENAI_API_KEY..."
-            )
-
+            raise RuntimeError("No API key found. Set OPENROUTER_API_KEY e.g.")
         payload: dict[str, Any] = {
             "model": self.config.model_name,
             "messages": messages,
@@ -67,32 +64,25 @@ class LLMClient:
             "max_tokens": self.config.max_tokens,
             "stop": ["<end_code>"],
         }
-
         endpoint = self._endpoint()
         retries = 0
         last_error: Exception | None = None
         total_attempts = 1 + max(0, self.config.max_retries)
-
         for attempt in range(total_attempts):
             api_key = self._next_key()
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "User-Agent": "agent-smith/0.1",
             }
-
             started = time.perf_counter()
             try:
-                # requests automatically encodes payload and routes timeouts
                 response = requests.post(
                     endpoint,
                     json=payload,
                     headers=headers,
                     timeout=self.config.timeout_seconds,
                 )
-
-                # Check for HTTP errors (like 4xx or 5xx status codes)
                 if response.status_code != 200:
-                    # Creating a dummy HTTPError to feed into your retry logic below
                     exc = requests.exceptions.HTTPError(response=response)
                     raise exc
 
@@ -142,7 +132,6 @@ class LLMClient:
                     break
 
                 sleep_for: float | None = None
-                # Clean header extraction via case-insensitive dictionary lookup
                 retry_after = exc.response.headers.get("Retry-After")
                 if retry_after:
                     try:
@@ -169,8 +158,8 @@ class LLMClient:
                 continue
 
             except (
-                requests.exceptions.RequestException,  # Catches Connection & Timeout errors
-                ValueError,  # Catches JSON decoding exceptions
+                requests.exceptions.RequestException,
+                ValueError,
                 KeyError,
             ) as exc:
                 last_error = exc
