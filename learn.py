@@ -127,47 +127,73 @@
 # middle_slice[0] = ord("X")
 # print(data)
 
-# create custom context manager
-from contextlib import contextmanager
-import time
+# # create custom context manager
+# from contextlib import contextmanager
+# import time
+#
+#
+# @contextmanager
+# def timer_context():
+#     # 1. setup when entering the context
+#     start_time = time.time()
+#     print("timer started")
+#     try:
+#         # 2. hand over control to the 'with' block
+#         yield
+#     finally:
+#         # 3. teardown
+#         end_time = time.time()
+#         print(f"timer stoped {end_time - start_time}")
+#
+#
+# with timer_context():
+#     print("doing some work")
+#     time.sleep(1.5)
+#
+#
+# # using a class, implementing __enter__ and __exit__
+# class DatabaseConnection:
+#     def __init__(self, db_name):
+#         self.db_name = db_name
+#
+#     def __enter__(self):
+#         # 1. setup: open connection and return ressource
+#         print(f" Connection to database {self.db_name}")
+#         return self  # this is what goes in the 'as' var
+#
+#     def __exit__(self, exc_type, exc_val, exc_tb):
+#         # 2. teardown: close the conn
+#         print(f"closing the conneciton")
+#         if exc_type:
+#             print(f"an error occured")
+#         return False  # to let python raise the error normally or true to suppress it
+#
+#
+# with DatabaseConnection("production_db") as db:
+#     print("fetching data")
 
+# learn urllib
+# from urllib.request import urlopen
+#
+# url = "https://example.com"
+# with urlopen(url) as response:
+#     # response body initially returns as raw bytes
+#     raw_html = response.read()
+#     # decode the bytes into a readable string
+#     html_string = raw_html.decode("utf-8")
+#     print(f"Status Code: {response.status}")
+#     print(raw_html[:200])
+#     print()
+#     print(html_string[:200])
 
-@contextmanager
-def timer_context():
-    # 1. setup when entering the context
-    start_time = time.time()
-    print("timer started")
-    try:
-        # 2. hand over control to the 'with' block
-        yield
-    finally:
-        # 3. teardown
-        end_time = time.time()
-        print(f"timer stoped {end_time - start_time}")
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
+base_url = "https://httpbin.org"
+params = {"search": "python tutorial", "limit": 5}
 
-with timer_context():
-    print("doing some work")
-    time.sleep(1.5)
-
-
-# using a class, implementing __enter__ and __exit__
-class DatabaseConnection:
-    def __init__(self, db_name):
-        self.db_name = db_name
-
-    def __enter__(self):
-        # 1. setup: open connection and return ressource
-        print(f" Connection to database {self.db_name}")
-        return self  # this is what goes in the 'as' var
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # 2. teardown: close the conn
-        print(f"closing the conneciton")
-        if exc_type:
-            print(f"an error occured")
-        return False  # to let python raise the error normally or true to suppress it
-
-
-with DatabaseConnection("production_db") as db:
-    print("fetching data")
+query_string = urlencode(params)
+full_url = f"{base_url}?{query_string}"
+print(query_string)
+with urlopen(full_url) as response:
+    print(response.read().decode("utf-8"))

@@ -13,17 +13,20 @@ RUN useradd -m -u 1000 sandbox
 WORKDIR /workspace
 RUN mkdir /testbed && chown -R sandbox:sandbox /testbed /workspace
 
-# Install the MCP server dependencies using uv (fast and cache-less)
-RUN uv pip install --system --no-cache mcp agent-smith
+# Install the MCP server's actual dependency (the "agent-smith" PyPI package
+# is an unrelated project and does not provide src.tools.HostBackend)
+RUN uv pip install --system --no-cache mcp
 
-# Copy your server script into the container
-COPY mpc_tools_swebench.py /workspace/mpc_tools_swebench.py
-RUN chown sandbox:sandbox /workspace/mpc_tools_swebench.py
+# Copy your server script AND the local src/ package it imports from
+COPY mcp_tools_swebench.py /workspace/mcp_tools_swebench.py
+COPY src/ /workspace/src/
+RUN chown -R sandbox:sandbox /workspace
 
 # Switch to the non-root user to enforce sandbox security constraints
 USER sandbox
 
-ENV TESTBED_PATH=/testbed
+# Must match the env var name read in mcp_tools_swebench.py's context()
+ENV AGENT_SMITH_TESTBED_PATH=/testbed
 
 # Run the server via stdio transport
-CMD ["python", "mpc_tools_swebench.py"]
+CMD ["python", "mcp_tools_swebench.py"]
