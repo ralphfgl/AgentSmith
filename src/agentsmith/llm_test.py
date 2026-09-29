@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 
-from src.models import LLMResponse
+from agentsmith.models import LLMResponse
 
 
 def approximate_tokens(text: str) -> int:

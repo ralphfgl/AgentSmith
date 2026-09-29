@@ -186,14 +186,20 @@
 #     print()
 #     print(html_string[:200])
 
-from urllib.parse import urlencode
-from urllib.request import urlopen
+# from urllib.parse import urlencode
+# from urllib.request import urlopen
+#
+# base_url = "https://httpbin.org"
+# params = {"search": "python tutorial", "limit": 5}
+#
+# query_string = urlencode(params)
+# full_url = f"{base_url}?{query_string}"
+# print(query_string)
+# with urlopen(full_url) as response:
+#     print(response.read().decode("utf-8"))
 
-base_url = "https://httpbin.org"
-params = {"search": "python tutorial", "limit": 5}
+import datetime
 
-query_string = urlencode(params)
-full_url = f"{base_url}?{query_string}"
-print(query_string)
-with urlopen(full_url) as response:
-    print(response.read().decode("utf-8"))
+today = datetime.date(2026, 9, 29)
+print(repr(today))
+print(str(today))
