@@ -1,18 +1,6 @@
-# *************************************************************************** #
-#                                                                             #
-#                                                        :::      ::::::::    #
-#    models.py                                          :+:      :+:    :+:    #
-#                                                    +:+ +:+         +:+      #
-#    By: rfeghali <rfeghali@learner.42.tech>       +#+  +:+       +#+         #
-#                                                +#+#+#+#+#+   +#+            #
-#    Created: 2026/09/21 14:06:27 by rfeghali         #+#    #+#              #
-#    Updated: 2026/09/21 14:07:09 by rfeghali        ###   ########.fr        #
-#                                                                             #
-# *************************************************************************** #
-
 """Models."""
 
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -191,3 +179,21 @@ class MBPPTaskInput(BaseModel):
     function_definition: str
     test_imports: List[str] = Field(default_factory=list)
     test_list: List[str] = Field(default_factory=list)
+
+
+class LLMResponse(BaseModel):
+    """Normalized LLM API response."""
+
+    text: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: float
+    retries: int = 0
+
+
+class ToolSpec(BaseModel):
+    """Serializable view of an MCP tool schema"""
+
+    name: str
+    description: str = ""
+    input_schema: dict[str, Any] = Field(default_factory=dict)

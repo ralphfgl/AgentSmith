@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import requests
-from src.models import LLMResponse
+from agentsmith.models import LLMResponse
 
 
 def approximate_tokens(text: str) -> int:

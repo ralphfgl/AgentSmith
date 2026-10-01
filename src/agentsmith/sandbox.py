@@ -117,7 +117,7 @@ def _make_restriced_import(authorized: list[str]) -> Callable[..., Any]:
         if level != 0:
             raise ImportError("Relative imports are disabled in the sandbox")
         root = name.split(".", 1)[0]
-        if not _import_allowed(name, authorized) or _import_allowed(
+        if not _import_allowed(name, authorized) and not _import_allowed(
             root, authorized
         ):
             raise ImportError(f"Import blocked by sandbox: {name}")
@@ -299,8 +299,9 @@ def _apply_ressource_limits(config: SandboxConfig) -> None:
             raise TimeoutError(
                 f"Sandbox timeout after {config.max_execution_time_seconds}s"
             )
-            signal.signal(signal.SIGALRM, _on_alarm)
-            signal.alarm(max(1, int(config.max_execution_time_seconds)))
+
+        signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(max(1, int(config.max_execution_time_seconds)))
     # attributes catches plateform without SIGALRM (windows), value error catch non main thread issue
     except (AttributeError, ValueError):
         pass
@@ -480,20 +481,3 @@ def _repl(config: SandboxConfig | None = None) -> None:
 
 if __name__ == "__main__":
     _repl()
-
-"""
-Design:
-- Child process (multiprocessing) so runaway code can be killed.
-- Restricted __builtins__ in the child namespace.
-- Import allowlist (glob-aware).
-- Filesystem allowlist (realpath-resolved).
-- Wall-clock timeout via SIGALRM in child + join timeout in parent.
-- Memory limit via resource.setrlimit in child.
-- final_answer(answer) raises a signal exception caught by the parent.
-
-Known limitations (see README):
-- object.__subclasses__() traversal can reach loaded classes.
-- ctypes is not importable, but if any allowed module exposes it, this breaks.
-- SIGALRM only fires in the main thread of the child; that's fine here.
-- Not a security boundary against a determined adversary.
-"""

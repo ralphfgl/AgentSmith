@@ -198,8 +198,41 @@
 # with urlopen(full_url) as response:
 #     print(response.read().decode("utf-8"))
 
-import datetime
+# import datetime
+# today = datetime.date(2026, 9, 29)
+# print(repr(today))
+# print(str(today))
 
-today = datetime.date(2026, 9, 29)
-print(repr(today))
-print(str(today))
+import asyncio
+import time
+
+
+async def brew_coffee():
+    print("start brewing coffee")
+    await asyncio.sleep(2)
+    print("coffee ready")
+    return "Capucino"
+
+
+async def toast_bread():
+    print("putting bread in toaster")
+    await asyncio.sleep(1)
+    print("toast ready")
+    return "toas"
+
+
+async def main():
+    start_time = time.perf_counter()
+    # grabs a reference to an running event loop
+    loop = asyncio.get_running_loop()
+    print(class_name := f"using loop {loop.__class__.__name__}")
+    print("start breakfast")
+    # launch async task concurently
+    breakfast = await asyncio.gather(brew_coffee(), toast_bread())
+    end_time = time.perf_counter()
+    print(f"served: {breakfast}")
+    print(f"time : {end_time - start_time}")
+
+
+# run create the event loop
+asyncio.run(main())
