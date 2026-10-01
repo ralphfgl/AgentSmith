@@ -1,3 +1,4 @@
+from __future__ import annotations
 from contextlib import AsyncExitStack
 import os
 import asyncio
@@ -9,7 +10,7 @@ from agentsmith.models import ToolSpec
 
 
 class MCPClient:
-    """Mcp client"""
+    """MCP client session usable from synchronous sandbox code."""
 
     def __init__(
         self,
@@ -31,9 +32,11 @@ class MCPClient:
         self._tools: list[ToolSpec] = []
 
     def start(self) -> None:
+        """Spawns the background thread and waits for connection initialization."""
+
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        self._ready.wait(timeout=30)
+        self._ready.wait(timeout=30.0)
         if self._failed:
             raise RuntimeError(
                 f"Failed to start the MCP client: {self._failed}"
@@ -42,6 +45,8 @@ class MCPClient:
             raise TimeoutError("Timed out while starting MCP server")
 
     def close(self) -> None:
+        """Safely shutdown the background loop and closes active ressources."""
+
         if not self._loop:
             return
         if self._shutdown_event:
@@ -57,9 +62,12 @@ class MCPClient:
         self.close()
 
     def list_tools(self) -> list[ToolSpec]:
+        """Returns the list of normalized tools discovered on startup"""
+
         return list(self._tools)
 
     def call_tool(self, name: str, args: dict[str, Any]) -> str:
+        """Synchronously calls a tool by dispatching it to the background event loop."""
         if not self._loop or not self._session:
             raise RuntimeError("MCP client haven't started yet")
         future = asyncio.run_coroutine_threadsafe(
@@ -112,7 +120,7 @@ class MCPClient:
                 # server communication session remains alive until a shutdown triggers _shutdown_event.set()
                 await self._shutdown_event.wait()
 
-        except BaseException as e:
+        except Exception as e:
             self._failed = e
             # so main dont hang in case of error
             self._ready.set()
@@ -127,19 +135,18 @@ class MCPClient:
     @staticmethod
     # handle camelCase and snake_cake to handle both v1 and v2 Anthropic mcp
     def _normalize_tool(tool: Any) -> ToolSpec:
-        schema = getattr(tool, "inputSchema", None) or getattr(
-            tool, "input_schema", None
-        )
         return ToolSpec(
             name=getattr(tool, "name", ""),
             description=getattr(tool, "description", "") or "",
-            input_schema=schema or {},
+            input_schema=getattr(tool, "input_schema" or {}) or {},
         )
 
-    # clean ClientSession tool_call result
     @staticmethod
     def _stringify_result(result: Any) -> str:
+        """Flattens diverse server content variants down into clean execution string."""
+
         pieces: list[str] = []
+        # standard protocol message text chunk
         for content in getattr(result, "content", []) or []:
             text = getattr(content, "text", None)
             if text is not None:
@@ -147,10 +154,9 @@ class MCPClient:
             else:
                 pieces.append(str(content))
         text = "\n".join(pieces)
+        # fallback for nested structured json object
         if not text:
-            structured = getattr(result, "structuredContent", None) or getattr(
-                result, "structured_content", None
-            )
+            structured = getattr(result, "structuredContent", None)
             if structured is not None:
                 if isinstance(structured, dict) and len(structured) == 1:
                     sole = next(iter(structured.values()))
@@ -160,8 +166,7 @@ class MCPClient:
                         text = json.dumps(sole, ensure_ascii=False, indent=2)
                 else:
                     text = json.dumps(structured, ensure_ascii=False, indent=2)
-        if getattr(result, "isError", False) or getattr(
-            result, "is_error", False
-        ):
+        # execution runtinme failures flagged by the server
+        if getattr(result, "isError", False):
             return "Tool error:\n" + text
         return text
