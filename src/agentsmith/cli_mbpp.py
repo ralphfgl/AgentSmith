@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--provider-url", required=True)
     parser.add_argument("--env-file", default=None)
-    parser.add_argument("--sandbox-config", default=None)
+    # parser.add_argument("--sandbox-config", default=None)
     return parser.parse_args()
 
 
@@ -26,11 +26,11 @@ def main() -> None:
     config = None
     # NOTE: validate config and pass it in .env like in subject
     result = run_mbpp_agent(
-        task_file=Path(args.taskfile),
+        task_file=Path(args.task_file),
         output_file=Path(args.output),
         model_name=args.model_name,
         provider_url=args.provider_url,
-        sandbox_config=config,
+        # sandbox_config=config,
     )
     if not result.success:
         raise SystemExit(1)

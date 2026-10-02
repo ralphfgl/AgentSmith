@@ -24,7 +24,7 @@ class LLMConfig:
     model_name: str
     api_keys: list[str]
     temperature: float = 0.1
-    max_tokens: int = 900
+    max_tokens: int = 4096
     timeout_seconds: float = 60.0
     max_retries: int = 0
 

@@ -4,14 +4,8 @@ mcp = MCPServer("AgentSmith-mock")
 
 
 @mcp.tool()
-def calculate_backups(frequency: str, count: int) -> str:
-    """
-    calculate backup stat for env file.
-    args:
-        freq: how often it runs
-        count: number of total file
-    """
-    return f"Processed a payload manifest for {count} files running  on a {frequency} schedule"
+def print_stuff(a: str, b: int) -> str:
+    return f"{a} and {b}"
 
 
 @mcp.tool()

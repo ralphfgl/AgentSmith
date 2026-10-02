@@ -4,6 +4,8 @@ import builtins  # used to copy safe builtins
 import io  # StringIO buffers to capture stdout from the child
 import os
 import sys
+import subprocess
+import json
 import pathlib  # path for the FS allowlist
 import signal  # SIGALRM-based timeout in the child
 import traceback  # format exception
@@ -14,6 +16,7 @@ from contextlib import (
 )  # context manager to capture output
 from dataclasses import dataclass, field
 from typing import Callable, Any, final
+from agentsmith.models import ToolSpec
 
 
 @dataclass
@@ -26,6 +29,25 @@ class SandboxResult:
     final_answer: str | None = None  # value passed to final_answer
     timed_out: bool = False  # if hit wall-clock limit
     truncated: bool = False  # if output was cut
+
+    @property
+    def observation(self) -> str:
+        parts: list[str] = []
+        if self.stdout:
+            parts.append(self.stdout)
+        if self.stderr:
+            parts.append("stderr:\n" + self.stderr)
+        if self.error:
+            parts.append("error:\n" + self.error)
+        if self.timed_out:
+            parts.append("Execution hit the configured timeout.")
+        if self.truncated:
+            parts.append(
+                "Tool or sandbox output was truncated due to size limits."
+            )
+        if self.final_answer is not None:
+            parts.append("final_answer captured.")
+        return "\n".join(parts).strip()
 
 
 DEFAULT_ALLOWED_IMPORTS = [
@@ -389,8 +411,37 @@ def _truncate(text: str, limit: int) -> tuple[str, bool]:
 
 
 class Sandbox:
-    def __init__(self, config: SandboxConfig | None = None):
+    def __init__(
+        self, config: SandboxConfig | None = None, tool_client: Any = None
+    ):
         self.config = config or SandboxConfig()
+        self.tool_client = tool_client
+
+    def tool_specs(self) -> list[ToolSpec]:
+        if not self.tool_client:
+            return []
+        return self.tool_client.list_tools()
+
+    def manual(self) -> str:
+        """Generate the dynamic manual the LLM receives in the system prompt."""
+
+        lines = [
+            "Sandbox execution manual:",
+            "- Write exactly one Python code block per step.",
+            "- Tool calls are ordinary Python function calls.",
+            "- Use final_answer(answer_string) when the task is solved.",
+            "- Positional arguments are rejected for MCP tools; use keyword arguments.",
+            "",
+            "Available tools:",
+            "- final_answer(answer: str): terminate the agent loop and return the solution.",
+        ]
+        for spec in self.tool_specs():
+            schema = json.dumps(spec.input_schema or {}, ensure_ascii=False)
+            description = (
+                spec.description.strip() or "No description provided."
+            )
+            lines.append(f"- {spec.name}: {description} schema={schema}")
+        return "\n".join(lines)
 
     def execute(self, code: str) -> SandboxResult:
         if not code.strip():
@@ -452,7 +503,8 @@ class Sandbox:
 
 
 def _repl(config: SandboxConfig | None = None) -> None:
-    sb = Sandbox(config)
+    # NOTE: Modify tool client
+    sb = Sandbox(config, tool_client=None)
     print("Sandbox REPL. Type `exit` or Ctrl+D to quit.")
     while True:
         try:
@@ -471,12 +523,52 @@ def _repl(config: SandboxConfig | None = None) -> None:
             print(
                 result.stderr,
                 end="" if result.stderr.endswith("\n") else "\n",
-                file=os.sys.stderr,
+                file=sys.stderr,
             )
         if result.error:
-            print(f"[error] {result.error}", file=os.sys.stderr)
+            print(f"[error] {result.error}", file=sys.stderr)
         if result.final_answer is not None:
             print(f"[final_answer] {result.final_answer}")
+
+
+def _make_tool_proxy(name: str, conn):
+    """Factory function that takes the name of an MCP tool
+    and a multiprocessing connection pipe object."""
+
+    def proxy(*args, **kwargs):
+        if args:
+            raise TypeError(
+                f"Tool {name} was called with positional arguments. "
+                "Use keyword arguments so MCP schemas remain explicit."
+            )
+        conn.send({"type": "tool_call", "name": name, "arguments": kwargs})
+        response = conn.recv()
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error", f"Tool {name} failed."))
+        return response.get("result", "")
+
+
+def _rss_kb(pid: int) -> int | None:
+    try:
+        completed = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(pid)],
+            text=True,
+            capture_output=True,
+            timeout=1,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    text = completed.stdout.strip()
+    if not text:
+        return None
+    try:
+        # takes last line to avoid the header pritned above
+        return int(text.splitlines()[-1].strip())
+    except ValueError:
+        return None
 
 
 if __name__ == "__main__":
