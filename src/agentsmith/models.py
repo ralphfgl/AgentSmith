@@ -3,6 +3,7 @@
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Protocol
 
 
 class StepMetrics(BaseModel):
@@ -197,3 +198,11 @@ class ToolSpec(BaseModel):
     name: str
     description: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolClient(Protocol):
+    """Tool client interface used by sandbox parent."""
+
+    def list_tools(self) -> list[ToolSpec]: ...
+
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> str: ...

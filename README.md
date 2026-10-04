@@ -28,20 +28,6 @@ The Background Client (Asynchronous): This worker runs an independent asyncio lo
 The MCP Server (Isolated Subprocess): Launched natively via OS-level pipes (stdin/stdout), this is an entirely separate system engine. It runs continuously. It receives raw byte packets from the client thread, maps the target string to a Python function inside its own execution boundaries, calculates the result, and flashes it back across the system pipeline. 
 
 
-To discover free models:
-- On grok:
-uv run --env-file .env --with groq python3 -c "
-import os
-from groq import Groq
-
-client = Groq(
-    api_key=os.environ.get('GROQ_API_KEY')
-)
-
-models = client.models.list()
-for model in models.data:
-    print(model.id)
-"
 
 MAIN PROCESS
   main thread: run_loop → Sandbox.execute()
@@ -61,3 +47,26 @@ MCP SERVER PROCESS (mcp_server_mbpp.py)
       │ subprocess.run
       ▼
   TEST SUBPROCESS: candidate_test.py → exit_code / stdout / stderr
+
+
+To discover free models:
+On grok:
+uv run --env-file .env --with groq python3 -c "
+import os
+from groq import Groq
+
+client = Groq(
+    api_key=os.environ.get('GROQ_API_KEY')
+)
+
+models = client.models.list()
+for model in models.data:
+    print(model.id)
+"
+
+to run with openrouter:
+uv run python -m agent_mbpp   --env-file .env --task-file cache/mbpp_task.json   --output cache/mbpp_solution.json   --model-name "google/gemma-4-31b-it:free"  --provider-url "https://openrouter.ai/api/v1"
+
+to run with groq:
+uv run python -m agent_mbpp   --env-file .env --task-file cache/mbpp_task.json   --output cache/mbpp_solution.json   --model-name "openai/gpt-oss-120b"  --provider-url "http
+s://api.groq.com/openai/v1"

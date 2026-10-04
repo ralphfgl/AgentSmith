@@ -2,6 +2,7 @@
 
 import builtins  # used to copy safe builtins
 import io  # StringIO buffers to capture stdout from the child
+import time
 import os
 import sys
 import subprocess
@@ -16,7 +17,7 @@ from contextlib import (
 )  # context manager to capture output
 from dataclasses import dataclass, field
 from typing import Callable, Any, final
-from agentsmith.models import ToolSpec
+from agentsmith.models import ToolSpec, ToolClient
 
 
 @dataclass
@@ -329,7 +330,9 @@ def _apply_ressource_limits(config: SandboxConfig) -> None:
         pass
 
 
-def _worker(code: str, config_dict: dict[str, Any], conn) -> None:
+def _worker(
+    code: str, config_dict: dict[str, Any], tool_names: list[str], conn
+) -> None:
     """Child worker"""
 
     config = SandboxConfig(**config_dict)
@@ -346,6 +349,8 @@ def _worker(code: str, config_dict: dict[str, Any], conn) -> None:
         raise FinalAnswerSignal(str(answer))
 
     namespace["final_answer"] = final_answer
+    for name in tool_names:
+        namespace[name] = _make_tool_proxy(name, conn)
     try:
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             # passing same dict as glob and local mimic how module level code behaves in std python
@@ -353,7 +358,7 @@ def _worker(code: str, config_dict: dict[str, Any], conn) -> None:
         # on normal completion send a success message with capturedd output
         conn.send(
             {
-                "ok": True,
+                "type": "done",
                 # getvalue to retrieve text as python string
                 "stdout": stdout_buf.getvalue(),
                 "stderr": stderr_buf.getvalue(),
@@ -365,7 +370,7 @@ def _worker(code: str, config_dict: dict[str, Any], conn) -> None:
     except FinalAnswerSignal as e:
         conn.send(
             {
-                "ok": True,
+                "type": "done",
                 "stdout": stdout_buf.getvalue(),
                 "stderr": stderr_buf.getvalue(),
                 "error": None,
@@ -376,7 +381,7 @@ def _worker(code: str, config_dict: dict[str, Any], conn) -> None:
     except TimeoutError as e:
         conn.send(
             {
-                "ok": True,
+                "type": "done",
                 "stdout": stdout_buf.getvalue(),
                 "stderr": stderr_buf.getvalue(),
                 "error": f"Execution hit timeout:: {e}",
@@ -384,12 +389,20 @@ def _worker(code: str, config_dict: dict[str, Any], conn) -> None:
                 "timed_out": True,
             }
         )
-    except (KeyboardInterrupt, SystemExit):
-        raise
+    except (KeyboardInterrupt, SystemExit) as e:
+        conn.send(
+            {
+                "type": "control_exception",
+                "exception": type(e).__name__,
+                "message": str(e),
+                "stdout": stdout_buf.getvalue(),
+                "stderr": stderr_buf.getvalue(),
+            }
+        )
     except BaseException:
         conn.send(
             {
-                "ok": True,
+                "type": "done",
                 "stdout": stdout_buf.getvalue(),
                 "stderr": stderr_buf.getvalue(),
                 "error": traceback.format_exc(),
@@ -412,7 +425,9 @@ def _truncate(text: str, limit: int) -> tuple[str, bool]:
 
 class Sandbox:
     def __init__(
-        self, config: SandboxConfig | None = None, tool_client: Any = None
+        self,
+        config: SandboxConfig | None = None,
+        tool_client: ToolClient | None = None,
     ):
         self.config = config or SandboxConfig()
         self.tool_client = tool_client
@@ -453,82 +468,117 @@ class Sandbox:
             return SandboxResult(
                 error="SyntaxError:\n" + traceback.format_exc()
             )
+        tool_names = [tool.name for tool in self.tool_specs()]
         ctx = mp.get_context(
             "fork" if "fork" in mp.get_all_start_methods() else "spawn"
         )
         parent_conn, child_conn = ctx.Pipe(duplex=True)
         proc = ctx.Process(
-            target=_worker, args=(code, self.config.__dict__, child_conn)
+            target=_worker,
+            args=(code, self.config.__dict__, tool_names, child_conn),
         )
         proc.start()
         child_conn.close()
-
-        message: dict[str, Any] | None = None
+        final_message: dict[str, Any] | None = None
+        deadline = time.monotonic() + self.config.max_execution_time_seconds
         try:
-            if parent_conn.poll(self.config.max_execution_time_seconds + 1):
-                message = parent_conn.recv()
-        except OSError:
-            message = None
+            while True:
+                rss_kb = _rss_kb(proc.pid) if proc.pid else None
+                if (
+                    rss_kb is not None
+                    and rss_kb > self.config.max_memory_mb * 1024
+                ):
+                    proc.terminate()
+                    proc.join(timeout=1)
+                    return SandboxResult(
+                        error=(
+                            "Execution exceeded the memory limit "
+                            f"{rss_kb // 1024} > {self.config.max_memory_mb} MB"
+                        )
+                    )
+                if parent_conn.poll(0.05):
+                    message = parent_conn.recv()
+                    msg_type = message.get("type")
+                    if msg_type == "tool_call":
+                        response = self._handle_tool_call(message)
+                        parent_conn.send(response)
+                    elif msg_type == "done":
+                        done_message = message
+                        break
+                    elif msg_type == "control_exception":
+                        proc.join(timeout=0.2)
+                        exception_name = message.get("exception", "SystemExit")
+                        if exception_name == "KeyboardInterrupt":
+                            raise KeyboardInterrupt(message.get("message", ""))
+                        raise SystemExit(message.get("message", ""))
+                proc.join(timeout=0)
+                if not proc.is_alive():
+                    if parent_conn.poll(0.01):
+                        final_message = parent_conn.recv()
+                        break
+                if time.monotonic() >= deadline:
+                    proc.terminate()
+                    proc.join(timeout=1)
+                    return SandboxResult(
+                        error=(
+                            "Exection hit the timeout. Partial output "
+                            "is unavailable because the child process did not complete a flush"
+                        ),
+                        timed_out=True,
+                    )
         finally:
             if proc.is_alive():
                 proc.terminate()
                 proc.join(timeout=1)
-                if proc.is_alive():
-                    proc.kill()
-                    proc.join(timeout=1)
             parent_conn.close()
-        if message is None:
+        if final_message is None:
+            code_info = (
+                f" exit code {proc.exitcode}"
+                if proc.exitcode is not None
+                else ""
+            )
             return SandboxResult(
-                error=f"Sandbox produced no result (exit code {proc.exitcode}).",
-                timed_out=proc.exitcode is not None and proc.exitcode < 0,
+                error=f"Sandbox process ended wit a result{code_info}"
             )
         stdout, t1 = _truncate(
-            message.get("stdout") or "", self.config.max_output_chars
+            final_message.get("stdout") or "", self.config.max_output_chars
         )
         stderr, t2 = _truncate(
-            message.get("stderr") or "", self.config.max_output_chars
+            final_message.get("stderr") or "", self.config.max_output_chars
         )
         error, t3 = _truncate(
-            message.get("error") or "", self.config.max_output_chars
+            final_message.get("error") or "", self.config.max_output_chars
         )
 
         return SandboxResult(
             stdout=stdout,
             stderr=stderr,
             error=error or None,
-            final_answer=message.get("final_answer"),
-            timed_out=bool(message.get("timed_out", False)),
+            final_answer=final_message.get("final_answer"),
+            timed_out=bool(final_message.get("timed_out", False)),
             truncated=t1 or t2 or t3,
         )
 
-
-def _repl(config: SandboxConfig | None = None) -> None:
-    # NOTE: Modify tool client
-    sb = Sandbox(config, tool_client=None)
-    print("Sandbox REPL. Type `exit` or Ctrl+D to quit.")
-    while True:
+    def _handle_tool_call(self, message: dict[str, Any]) -> dict[str, Any]:
+        if not self.tool_client:
+            return {"ok": False, "error": "No MCP tool client is connected."}
+        name = message.get("name", "")
+        args = message.get("arguments")
         try:
-            line = input(">>> ")
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if line.strip() in {"exit", "quit"}:
-            break
-        result = sb.execute(line)
-        if result.stdout:
-            print(
-                result.stdout, end="" if result.stdout.endswith("\n") else "\n"
+            result = self.tool_client.call_tool(name, args)
+            result_text = (
+                result if isinstance(result, str) else json.dumps(result)
             )
-        if result.stderr:
-            print(
-                result.stderr,
-                end="" if result.stderr.endswith("\n") else "\n",
-                file=sys.stderr,
+            result_text, truncated = _truncate(
+                result_text, self.config.max_output_chars
             )
-        if result.error:
-            print(f"[error] {result.error}", file=sys.stderr)
-        if result.final_answer is not None:
-            print(f"[final_answer] {result.final_answer}")
+            if truncated:
+                result_text += (
+                    "\nTool output was truncated due to sandbox size limits."
+                )
+            return {"ok": True, "result": result_text}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
 def _make_tool_proxy(name: str, conn):
@@ -571,5 +621,35 @@ def _rss_kb(pid: int) -> int | None:
         return None
 
 
+def _repl(sandbox: Sandbox) -> None:
+    print("Sandbox REPL. Type `exit` or Ctrl+D to quit.")
+    print(sandbox.manual())
+    while True:
+        try:
+            line = input(">>> ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if line.strip() in {"exit", "quit"}:
+            break
+        if not line.strip():
+            continue
+        result = sandbox.execute(line)
+        if result.stdout:
+            print(
+                result.stdout, end="" if result.stdout.endswith("\n") else "\n"
+            )
+        if result.stderr:
+            print(
+                result.stderr,
+                end="" if result.stderr.endswith("\n") else "\n",
+                file=sys.stderr,
+            )
+        if result.error:
+            print(f"[error] {result.error}", file=sys.stderr)
+        if result.final_answer is not None:
+            print(f"[final_answer] {result.final_answer}")
+
+
 if __name__ == "__main__":
-    _repl()
+    pass
