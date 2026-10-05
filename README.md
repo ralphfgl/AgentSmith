@@ -79,3 +79,5 @@ systemctl --user enable --now podman.socket
 set docker env var:
 export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
 
+validate solution
+uv run moulinette_eval validate mbpp  --task-file ../cache/mbpp_task.json --solution-file ../cache/mbpp_solution.json
