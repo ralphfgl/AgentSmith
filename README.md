@@ -70,3 +70,12 @@ uv run python -m agent_mbpp   --env-file .env --task-file cache/mbpp_task.json  
 to run with groq:
 uv run python -m agent_mbpp   --env-file .env --task-file cache/mbpp_task.json   --output cache/mbpp_solution.json   --model-name "openai/gpt-oss-120b"  --provider-url "http
 s://api.groq.com/openai/v1"
+
+
+to use podman at 42:
+start podman user socket
+systemctl --user enable --now podman.socket
+
+set docker env var:
+export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
+

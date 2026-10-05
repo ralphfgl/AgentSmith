@@ -194,6 +194,7 @@ def run_mbpp_agent(
     model_name: str,
     provider_url: str,
     max_retries: int = 3,
+    max_iterations: int,
     sandbox_config: SandboxConfig | None = None,
 ) -> SolutionOutput:
     started = time.perf_counter()
@@ -201,12 +202,12 @@ def run_mbpp_agent(
     env = os.environ.copy()
     env["AGENT_SMITH_TASK_FILE"] = str(task_file.resolve())
     mcp = MCPClient(
-        stdio_command=_create_command("mcp_server_mbpp.py"), env=env
+        stdio_command=_create_command("mcp_tools_mbpp.py"), env=env
     )
     try:
         mcp.start()
         sandbox = Sandbox(
-            config=sandbox_config or SandboxConfig(),  # tool_client=mcp
+            config=sandbox_config or SandboxConfig(), tool_client=mcp
         )
         system_prompt = mbpp_system_prompt(sandbox.manual())
         llm = LLMClient(
@@ -214,7 +215,7 @@ def run_mbpp_agent(
                 provider_url=provider_url,
                 model_name=model_name,
                 api_keys=api_keys_for_provider(provider_url),
-                max_tokens=900,
+                max_tokens=4096,
                 max_retries=max_retries,
             )
         )
@@ -225,7 +226,7 @@ def run_mbpp_agent(
             user_prompt=mbpp_user_prompt(task),
             sandbox=sandbox,
             llm=llm,
-            # max_iterations=max_iterations,
+            max_iterations=max_iterations,
             started=started,
         )
     except Exception as exc:

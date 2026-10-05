@@ -137,10 +137,13 @@ class MCPClient:
     @staticmethod
     # handle camelCase and snake_cake to handle both v1 and v2 Anthropic mcp
     def _normalize_tool(tool: Any) -> ToolSpec:
+        schema = getattr(tool, "inputSchema", None) or getattr(
+            tool, "input_schema", None
+        )
         return ToolSpec(
             name=getattr(tool, "name", ""),
             description=getattr(tool, "description", "") or "",
-            input_schema=getattr(tool, "input_schema" or {}) or {},
+            input_schema=schema or {},
         )
 
     @staticmethod

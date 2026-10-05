@@ -18,6 +18,7 @@ from contextlib import (
 from dataclasses import dataclass, field
 from typing import Callable, Any, final
 from agentsmith.models import ToolSpec, ToolClient
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -77,21 +78,60 @@ DEFAULT_ALLOWED_IMPORTS = [
 DEFAULT_ALLOWED_DIRS = ["/testbed", "/tmp/agent"]
 
 
-@dataclass
-class SandboxConfig:
-    """authorized import and timeout and memory limits"""
+class SandboxConfig(BaseModel):
+    """Sandbox configuration.
 
-    authorized_imports: list[str] = field(
-        default_factory=lambda: list(DEFAULT_ALLOWED_IMPORTS)
+    The default policy is an allowlist: imports, direct filesystem access, memory,
+    and runtime are all denied or constrained unless explicitly configured.
+    """
+
+    authorized_imports: list[str] = Field(
+        default_factory=lambda: [
+            "math",
+            "math.*",
+            "collections",
+            "collections.*",
+            "itertools",
+            "re",
+            "json",
+            "typing",
+            "typing.*",
+            "functools",
+            "operator",
+            "heapq",
+            "bisect",
+            "copy",
+            "string",
+            "random",
+            "datetime",
+            "datetime.*",
+            "array",
+            "cmath",
+        ]
     )
-    allowed_directories: list[str] = field(
-        default_factory=lambda: list(DEFAULT_ALLOWED_DIRS)
+    allowed_directories: list[str] = Field(
+        default_factory=lambda: ["/testbed", "/tmp/agent"]
     )
-    max_execution_time_seconds: int = (
-        30  # wall clock alarm used for both SIGALRM and the parent poll
-    )
-    max_memory_mb: int = 512  # RLIMIT_AS/RLIMIT_DATA cap
-    max_output_chars: int = 16_000  # cap for sdtout/err
+    max_execution_time_seconds: int = 30
+    max_memory_mb: int = 512
+    max_output_chars: int = 20_000
+
+
+# @dataclass
+# class SandboxConfig(BaseModel):
+#     """authorized import and timeout and memory limits"""
+#
+#     authorized_imports: list[str] = field(
+#         default_factory=lambda: list(DEFAULT_ALLOWED_IMPORTS)
+#     )
+#     allowed_directories: list[str] = field(
+#         default_factory=lambda: list(DEFAULT_ALLOWED_DIRS)
+#     )
+#     max_execution_time_seconds: int = (
+#         30  # wall clock alarm used for both SIGALRM and the parent poll
+#     )
+#     max_memory_mb: int = 512  # RLIMIT_AS/RLIMIT_DATA cap
+#     max_output_chars: int = 16_000  # cap for sdtout/err
 
 
 # custom exception used as a control-flow signal. raised by final_anser in sandbox and catched in _worker to extract the answer
@@ -475,7 +515,7 @@ class Sandbox:
         parent_conn, child_conn = ctx.Pipe(duplex=True)
         proc = ctx.Process(
             target=_worker,
-            args=(code, self.config.__dict__, tool_names, child_conn),
+            args=(code, self.config.model_dump(), tool_names, child_conn),
         )
         proc.start()
         child_conn.close()
@@ -503,7 +543,7 @@ class Sandbox:
                         response = self._handle_tool_call(message)
                         parent_conn.send(response)
                     elif msg_type == "done":
-                        done_message = message
+                        final_message = message
                         break
                     elif msg_type == "control_exception":
                         proc.join(timeout=0.2)
@@ -515,7 +555,7 @@ class Sandbox:
                 if not proc.is_alive():
                     if parent_conn.poll(0.01):
                         final_message = parent_conn.recv()
-                        break
+                    break
                 if time.monotonic() >= deadline:
                     proc.terminate()
                     proc.join(timeout=1)
@@ -596,6 +636,8 @@ def _make_tool_proxy(name: str, conn):
         if not response.get("ok"):
             raise RuntimeError(response.get("error", f"Tool {name} failed."))
         return response.get("result", "")
+
+    return proxy
 
 
 def _rss_kb(pid: int) -> int | None:

@@ -1,10 +1,10 @@
 {
-  "task_id": 167,
-  "task_definition": "Write a python function to find smallest power of 2 greater than or equal to n.",
-  "function_definition": "def next_power_of_2(n):",
+  "task_id": 2,
+  "task_definition": "Write a function to find the similar elements from the given two tuple lists.",
+  "function_definition": "def similar_elements(test_tup1, test_tup2):",
   "test_imports": [],
   "test_list": [
-    "assert next_power_of_2(5) == 8",
-    "assert next_power_of_2(17) == 32"
+    "assert set(similar_elements((1, 2, 3, 4),(5, 4, 3, 7))) == set((3, 4))",
+    "assert set(similar_elements((11, 12, 14, 13),(17, 15, 14, 13))) == set((13, 14))"
   ]
 }
