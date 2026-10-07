@@ -6,11 +6,21 @@ import sys
 import os
 import time
 from pathlib import Path
-from agentsmith.models import SolutionOutput, MBPPTaskInput, StepMetrics
+from agentsmith.models import (
+    SolutionOutput,
+    MBPPTaskInput,
+    StepMetrics,
+    SWEBenchTaskInput,
+)
 from agentsmith.mcp_client import MCPClient
 from agentsmith.llm import LLMClient, LLMConfig, approximate_tokens
 from agentsmith.sandbox import Sandbox, SandboxConfig
-from agentsmith.prompt import mbpp_system_prompt, mbpp_user_prompt
+from agentsmith.prompt import (
+    mbpp_system_prompt,
+    mbpp_user_prompt,
+    swebench_system_prompt,
+    swebench_user_prompt,
+)
 from agentsmith.env import api_keys_for_provider
 from agentsmith.extraction import extract_executable_code
 
@@ -236,6 +246,82 @@ def run_mbpp_agent(
         solution = _failure_solution(
             benchmark="mbpp",
             task_id=str(task.task_id),
+            system_prompt=system_prompt,
+            started=started,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    finally:
+        try:
+            mcp.close()
+        except Exception:
+            pass
+    _write_solution(output_file, solution)
+    return solution
+
+
+def run_swebench_agent(
+    *,
+    task_file: Path,
+    output_file: Path,
+    model_name: str,
+    provider_url: str,
+    api_key_env: str | None = None,
+    max_iterations: int = 30,
+    max_retries: int = 3,
+    sandbox_config: SandboxConfig | None = None,
+) -> SolutionOutput:
+    started = time.perf_counter()
+    task = SWEBenchTaskInput.model_validate_json(task_file.read_text())
+    env = os.environ.copy()
+    env["AGENT_SMITH_TASK_FILE"] = str(task_file.resolve())
+    mcp = MCPClient(
+        stdio_command=_create_command("mcp_tools_swebench.py"), env=env
+    )
+    try:
+        mcp.start()
+        sandbox = Sandbox(
+            config=sandbox_config or SandboxConfig(), tool_client=mcp
+        )
+        system_prompt = swebench_system_prompt(sandbox.manual())
+        llm = LLMClient(
+            LLMConfig(
+                provider_url=provider_url,
+                model_name=model_name,
+                api_keys=api_keys_for_provider(provider_url),
+                max_tokens=900,
+                max_retries=max_retries,
+            )
+        )
+        solution = run_loop(
+            benchmark="swebench",
+            task_id=task.instance_id,
+            system_prompt=system_prompt,
+            user_prompt=swebench_user_prompt(task),
+            sandbox=sandbox,
+            llm=llm,
+            max_iterations=max_iterations,
+            started=started,
+        )
+        if not solution.solution.strip():
+            try:
+                rescued = mcp.call_tool("get_patch", {})
+                if isinstance(rescued, str) and rescued.lstrip().startswith(
+                    "diff --git"
+                ):
+                    solution.solution = rescued
+                    solution.success = True
+                    solution.error = (
+                        (solution.error or "")
+                        + " | Rescued patch via get_patch() after loop end."
+                    ).strip(" |")
+            except Exception:
+                pass
+    except Exception as exc:
+        manual = "Sandbox manual unavailable because MCP startup failed."
+        system_prompt = swebench_system_prompt(manual)
+        solution = _failure_solution(
+            benchmark="swebench",
+            task_id=task.instance_id,
             system_prompt=system_prompt,
             started=started,
             error=f"{type(exc).__name__}: {exc}",

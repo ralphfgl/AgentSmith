@@ -15,9 +15,14 @@ def context() -> MBPPToolContext:
 
 
 def build_server():
-    from mcp.server.mcpserver import MCPServer
+    try:
+        from mcp.server.mcpserver import MCPServer
 
-    mcp = MCPServer("agent-smith-mbpp")
+        mcp = MCPServer("agent-smith-mbpp")
+    except ModuleNotFoundError:
+        from mcp.server.fastmcp import FastMCP
+
+        server = FastMCP("agent-smith-mbpp")
 
     @mcp.tool()
     def describe_task() -> str:
@@ -32,10 +37,10 @@ def build_server():
         return context().public_tests_source()
 
     @mcp.tool()
-    def run_tests(candidate_code: str = "") -> str:
+    def run_tests(code: str = "", test_list: list[str] | None = None) -> str:
         """Run public MBPP tests against candidate_code."""
 
-        return context().run_tests(candidate_code)
+        return context().run_tests(code=code, test_list=test_list)
 
     @mcp.resource("agent://mbpp/task")
     def task_resource() -> str:
@@ -61,6 +66,12 @@ def main() -> None:
     args = parser.parse_args()
     transport = "streamable-http" if args.http else "stdio"
     build_server().run(transport=transport)
+    # build_server().run(
+    #     transport="streamable-http",
+    #     host="127.0.0.1",
+    #     port=8000,
+    #     streamable_http_path="/mcp",
+    # )
 
 
 if __name__ == "__main__":

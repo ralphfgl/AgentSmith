@@ -88,7 +88,9 @@ class MCPClient:
         try:
             from mcp import ClientSession, StdioServerParameters
             from mcp.client.stdio import stdio_client
-            from mcp.client.sse import sse_client
+
+            # from mcp.client.sse import sse_client
+            from mcp.client.streamable_http import streamable_http_client
 
             self._shutdown_event = asyncio.Event()
             async with AsyncExitStack() as stack:
@@ -105,7 +107,8 @@ class MCPClient:
                     ) = await stack.enter_async_context(stdio_client(params))
                 else:
                     transport = await stack.enter_async_context(
-                        sse_client(self.server_url)
+                        # sse_client(self.server_url)
+                        streamable_http_client(self.server_url)
                     )
                     read_stream, write_stream = transport[0], transport[1]
                     # read_stream, write_stream = transport, transport

@@ -19,7 +19,8 @@ def load_env_file(path: str | None = None) -> None:
         load_dotenv(dotenv_path=env_path)
     else:
         # load_dotenv() naturally climbs parent directories automatically
-        load_dotenv(search_path=Path.cwd())
+        # load_dotenv(search_path=Path.cwd())
+        load_dotenv()
 
 
 def split_env_tokens(value: str | None) -> list[str]:

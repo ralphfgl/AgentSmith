@@ -1,5 +1,8 @@
 https://modelcontextprotocol.io/specification/2025-06-18/server/tools -> anthropic ClientSession tool call result
 
+mcp client:
+https://py.sdk.modelcontextprotocol.io/client/#your-first-client
+
 
 ┌────────────────────────────────────────────────────────────────────────┐
 │ HOST PYTHON PROCESS (AgentSmith)                                       │
@@ -81,3 +84,8 @@ export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
 
 validate solution
 uv run moulinette_eval validate mbpp  --task-file ../cache/mbpp_task.json --solution-file ../cache/mbpp_solution.json
+
+LAUNCH http server:
+AGENT_SMITH_TASK_FILE=cache/mbpp_task.json uv run python mcp_tools_mbpp.py --http
+LAUNCH sandbox with htpp client:
+uv run sandbox --mcp-server http://127.0.0.1:8000/mcp

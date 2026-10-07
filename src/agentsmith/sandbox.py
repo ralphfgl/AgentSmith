@@ -1,5 +1,8 @@
 """Minimal language level sandbox for LLM generated code."""
 
+import argparse
+import ast  # to print the value of the last expression
+import codeop  # to know if an input is complete
 import builtins  # used to copy safe builtins
 import io  # StringIO buffers to capture stdout from the child
 import time
@@ -17,6 +20,7 @@ from contextlib import (
 )  # context manager to capture output
 from dataclasses import dataclass, field
 from typing import Callable, Any, final
+from agentsmith.mcp_client import MCPClient
 from agentsmith.models import ToolSpec, ToolClient
 from pydantic import BaseModel, Field
 
@@ -135,7 +139,7 @@ class SandboxConfig(BaseModel):
 
 
 # custom exception used as a control-flow signal. raised by final_anser in sandbox and catched in _worker to extract the answer
-class FinalAnswerSignal(Exception):
+class FinalAnswerSignal(BaseException):
     """Control flow signal."""
 
     def __init__(self, answer: str):
@@ -340,7 +344,7 @@ def _make_safe_builtins(config: SandboxConfig) -> dict[str, Any]:
 
 
 def _apply_ressource_limits(config: SandboxConfig) -> None:
-    """Ressource limits in child"""
+    """Memory limit, applied once when the child starts."""
 
     try:
         import resource
@@ -356,6 +360,10 @@ def _apply_ressource_limits(config: SandboxConfig) -> None:
     except ImportError:
         pass
 
+
+def _start_timer(config: SandboxConfig) -> None:
+    """Timeout, re-armed for EVERY entry (the child now lives across entries)."""
+
     try:
 
         def _on_alarm(signum, frame):
@@ -365,20 +373,32 @@ def _apply_ressource_limits(config: SandboxConfig) -> None:
 
         signal.signal(signal.SIGALRM, _on_alarm)
         signal.alarm(max(1, int(config.max_execution_time_seconds)))
-    # attributes catches plateform without SIGALRM (windows), value error catch non main thread issue
+    # no SIGALRM on windows
     except (AttributeError, ValueError):
         pass
 
 
+def _run(code: str, namespace: dict[str, Any], echo: bool) -> None:
+    """exec the code. With echo, print the last expression like Python's REPL."""
+
+    tree = ast.parse(code, "<sandbox>", "exec")
+    last = None
+    if echo and tree.body and isinstance(tree.body[-1], ast.Expr):
+        last = ast.Expression(tree.body.pop().value)
+    exec(compile(tree, "<sandbox>", "exec"), namespace)
+    if last is not None:
+        value = eval(compile(last, "<sandbox>", "eval"), namespace)
+        if value is not None:
+            print(repr(value))
+
+
 def _worker(
-    code: str, config_dict: dict[str, Any], tool_names: list[str], conn
+    config_dict: dict[str, Any], tool_names: list[str], conn, persistent: bool
 ) -> None:
-    """Child worker"""
+    """Child worker: builds the namespace ONCE, then runs entries one by one."""
 
     config = SandboxConfig(**config_dict)
     _apply_ressource_limits(config)
-    stdout_buf = io.StringIO()
-    stderr_buf = io.StringIO()
     namespace: dict[str, Any] = {
         "__builtins__": _make_safe_builtins(config),
         # so __name__ == __main__ block dont run
@@ -391,67 +411,37 @@ def _worker(
     namespace["final_answer"] = final_answer
     for name in tool_names:
         namespace[name] = _make_tool_proxy(name, conn)
-    try:
-        with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-            # passing same dict as glob and local mimic how module level code behaves in std python
-            exec(compile(code, "<sandbox>", "exec"), namespace, namespace)
-        # on normal completion send a success message with capturedd output
-        conn.send(
-            {
-                "type": "done",
-                # getvalue to retrieve text as python string
-                "stdout": stdout_buf.getvalue(),
-                "stderr": stderr_buf.getvalue(),
-                "error": None,
-                "final_answer": None,
-                "timed_out": False,
-            }
-        )
-    except FinalAnswerSignal as e:
-        conn.send(
-            {
-                "type": "done",
-                "stdout": stdout_buf.getvalue(),
-                "stderr": stderr_buf.getvalue(),
-                "error": None,
-                "final_answer": e.answer,
-                "timed_out": False,
-            }
-        )
-    except TimeoutError as e:
-        conn.send(
-            {
-                "type": "done",
-                "stdout": stdout_buf.getvalue(),
-                "stderr": stderr_buf.getvalue(),
-                "error": f"Execution hit timeout:: {e}",
-                "final_answer": None,
-                "timed_out": True,
-            }
-        )
-    except (KeyboardInterrupt, SystemExit) as e:
-        conn.send(
-            {
-                "type": "control_exception",
-                "exception": type(e).__name__,
-                "message": str(e),
-                "stdout": stdout_buf.getvalue(),
-                "stderr": stderr_buf.getvalue(),
-            }
-        )
-    except BaseException:
-        conn.send(
-            {
-                "type": "done",
-                "stdout": stdout_buf.getvalue(),
-                "stderr": stderr_buf.getvalue(),
-                "error": traceback.format_exc(),
-                "final_answer": None,
-                "timed_out": False,
-            }
-        )
-    finally:
-        conn.close()
+
+    while True:
+        try:
+            request = conn.recv()  # {"code": ..., "echo": ...}
+        except EOFError:  # parent is gone
+            break
+        stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
+        reply = {
+            "type": "done",
+            "error": None,
+            "final_answer": None,
+            "timed_out": False,
+        }
+        _start_timer(config)
+        try:
+            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                _run(request["code"], namespace, request["echo"])
+        except FinalAnswerSignal as e:
+            reply["final_answer"] = e.answer
+        except TimeoutError as e:
+            reply["error"] = f"Execution hit timeout: {e}"
+            reply["timed_out"] = True
+        except BaseException:
+            reply["error"] = traceback.format_exc()
+        signal.alarm(0)
+        reply["stdout"] = stdout_buf.getvalue()
+        reply["stderr"] = stderr_buf.getvalue()
+        conn.send(reply)
+        if not persistent:
+            break
+    conn.close()
 
 
 ## Parent
@@ -468,9 +458,28 @@ class Sandbox:
         self,
         config: SandboxConfig | None = None,
         tool_client: ToolClient | None = None,
+        persistent: bool = False,  # True: keep variables between execute() calls
     ):
         self.config = config or SandboxConfig()
         self.tool_client = tool_client
+        self.persistent = persistent
+        self._proc = None
+        self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def close(self) -> None:
+        """Kill the child. The next execute() starts a fresh one."""
+        if self._proc is not None:
+            if self._proc.is_alive():
+                self._proc.terminate()
+            self._proc.join(timeout=1)
+            self._conn.close()
+        self._proc = self._conn = None
 
     def tool_specs(self) -> list[ToolSpec]:
         if not self.tool_client:
@@ -498,29 +507,40 @@ class Sandbox:
             lines.append(f"- {spec.name}: {description} schema={schema}")
         return "\n".join(lines)
 
-    def execute(self, code: str) -> SandboxResult:
+    def execute(self, code: str, echo: bool = False) -> SandboxResult:
         if not code.strip():
             return SandboxResult(error="No code provided.")
-        # first compile in the parent to catch syntax error without spawning a process
+        # first compile in the parent to catch syntax error without a round trip
         try:
             compile(code, "<sandbox>", "exec")
         except SyntaxError:
             return SandboxResult(
-                error="SyntaxError:\n" + traceback.format_exc()
+                error="SyntaxError:\n" + traceback.format_exc(limit=0)
             )
-        tool_names = [tool.name for tool in self.tool_specs()]
-        ctx = mp.get_context(
-            "fork" if "fork" in mp.get_all_start_methods() else "spawn"
-        )
-        parent_conn, child_conn = ctx.Pipe(duplex=True)
-        proc = ctx.Process(
-            target=_worker,
-            args=(code, self.config.model_dump(), tool_names, child_conn),
-        )
-        proc.start()
-        child_conn.close()
+        if self._proc is None:  # start the child (only once if persistent)
+            tool_names = [tool.name for tool in self.tool_specs()]
+            ctx = mp.get_context(
+                "fork" if "fork" in mp.get_all_start_methods() else "spawn"
+            )
+            self._conn, child_conn = ctx.Pipe(duplex=True)
+            self._proc = ctx.Process(
+                target=_worker,
+                args=(
+                    self.config.model_dump(),
+                    tool_names,
+                    child_conn,
+                    self.persistent,
+                ),
+            )
+            self._proc.start()
+            child_conn.close()
+        proc, conn = self._proc, self._conn
+        conn.send({"code": code, "echo": echo})
         final_message: dict[str, Any] | None = None
-        deadline = time.monotonic() + self.config.max_execution_time_seconds
+        # +1s: lets the child report its own timeout (with partial output) first
+        deadline = (
+            time.monotonic() + self.config.max_execution_time_seconds + 1
+        )
         try:
             while True:
                 rss_kb = _rss_kb(proc.pid) if proc.pid else None
@@ -528,74 +548,52 @@ class Sandbox:
                     rss_kb is not None
                     and rss_kb > self.config.max_memory_mb * 1024
                 ):
-                    proc.terminate()
-                    proc.join(timeout=1)
+                    self.close()
                     return SandboxResult(
                         error=(
                             "Execution exceeded the memory limit "
-                            f"{rss_kb // 1024} > {self.config.max_memory_mb} MB"
+                            f"{rss_kb // 1024} > {self.config.max_memory_mb} MB "
+                            "(sandbox state reset)"
                         )
                     )
-                if parent_conn.poll(0.05):
-                    message = parent_conn.recv()
-                    msg_type = message.get("type")
-                    if msg_type == "tool_call":
-                        response = self._handle_tool_call(message)
-                        parent_conn.send(response)
-                    elif msg_type == "done":
+                if conn.poll(0.05):
+                    message = conn.recv()
+                    if message["type"] == "tool_call":
+                        conn.send(self._handle_tool_call(message))
+                    elif message["type"] == "done":
                         final_message = message
                         break
-                    elif msg_type == "control_exception":
-                        proc.join(timeout=0.2)
-                        exception_name = message.get("exception", "SystemExit")
-                        if exception_name == "KeyboardInterrupt":
-                            raise KeyboardInterrupt(message.get("message", ""))
-                        raise SystemExit(message.get("message", ""))
-                proc.join(timeout=0)
-                if not proc.is_alive():
-                    if parent_conn.poll(0.01):
-                        final_message = parent_conn.recv()
+                elif not proc.is_alive():
                     break
-                if time.monotonic() >= deadline:
-                    proc.terminate()
-                    proc.join(timeout=1)
+                elif time.monotonic() >= deadline:
+                    self.close()
                     return SandboxResult(
-                        error=(
-                            "Exection hit the timeout. Partial output "
-                            "is unavailable because the child process did not complete a flush"
-                        ),
+                        error="Execution hit the timeout and was killed (sandbox state reset)",
                         timed_out=True,
                     )
         finally:
-            if proc.is_alive():
-                proc.terminate()
-                proc.join(timeout=1)
-            parent_conn.close()
+            if not self.persistent:
+                self.close()
         if final_message is None:
-            code_info = (
-                f" exit code {proc.exitcode}"
-                if proc.exitcode is not None
-                else ""
-            )
+            self.close()
             return SandboxResult(
-                error=f"Sandbox process ended wit a result{code_info}"
+                error="Sandbox process ended without a result"
             )
         stdout, t1 = _truncate(
-            final_message.get("stdout") or "", self.config.max_output_chars
+            final_message["stdout"], self.config.max_output_chars
         )
         stderr, t2 = _truncate(
-            final_message.get("stderr") or "", self.config.max_output_chars
+            final_message["stderr"], self.config.max_output_chars
         )
         error, t3 = _truncate(
-            final_message.get("error") or "", self.config.max_output_chars
+            final_message["error"] or "", self.config.max_output_chars
         )
-
         return SandboxResult(
             stdout=stdout,
             stderr=stderr,
             error=error or None,
-            final_answer=final_message.get("final_answer"),
-            timed_out=bool(final_message.get("timed_out", False)),
+            final_answer=final_message["final_answer"],
+            timed_out=final_message["timed_out"],
             truncated=t1 or t2 or t3,
         )
 
@@ -663,35 +661,92 @@ def _rss_kb(pid: int) -> int | None:
         return None
 
 
+def _is_incomplete(source: str) -> bool:
+    """True if the input needs more lines (open def/if/for block, open bracket)."""
+    try:
+        return codeop.compile_command(source, "<sandbox>", "single") is None
+    except (SyntaxError, ValueError, OverflowError):
+        return False  # real error: let the sandbox report it
+
+
 def _repl(sandbox: Sandbox) -> None:
     print("Sandbox REPL. Type `exit` or Ctrl+D to quit.")
+    print(
+        "In a `...` block: empty line = run it, ESC then Enter (or Ctrl+C) = cancel it."
+    )
     print(sandbox.manual())
+    lines: list[str] = []
     while True:
         try:
-            line = input(">>> ")
-        except (EOFError, KeyboardInterrupt):
+            line = input("... " if lines else ">>> ")
+        except EOFError:  # Ctrl+D
             print()
             break
-        if line.strip() in {"exit", "quit"}:
-            break
-        if not line.strip():
+        except KeyboardInterrupt:  # Ctrl+C: cancel current input
+            print("\nKeyboardInterrupt")
+            lines = []
             continue
-        result = sandbox.execute(line)
+        if "\x1b" in line:  # ESC (+ Enter): cancel current input
+            print("(cancelled)")
+            lines = []
+            continue
+        if not lines and line.strip() in {"exit", "quit"}:
+            break
+        if not lines and not line.strip():
+            continue
+        lines.append(line)
+        source = "\n".join(lines)
+        if _is_incomplete(source):
+            continue
+        lines = []
+        try:
+            result = sandbox.execute(source, echo=True)
+        except KeyboardInterrupt:  # Ctrl+C while running
+            print("\nInterrupted (sandbox state reset)")
+            continue
         if result.stdout:
             print(
                 result.stdout, end="" if result.stdout.endswith("\n") else "\n"
             )
         if result.stderr:
-            print(
-                result.stderr,
-                end="" if result.stderr.endswith("\n") else "\n",
-                file=sys.stderr,
-            )
+            print(result.stderr, end="", file=sys.stderr)
         if result.error:
             print(f"[error] {result.error}", file=sys.stderr)
         if result.final_answer is not None:
             print(f"[final_answer] {result.final_answer}")
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="sandbox")
+    parser.add_argument("config", nargs="?", help="sandbox config JSON file")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--mcp-stdio", help='e.g. "python mcp_tools_mbpp.py"')
+    group.add_argument(
+        "--mcp-server",
+        nargs="?",
+        const="http://127.0.0.1:8000/sse",
+        help="MCP server URL",
+    )
+    args = parser.parse_args()
+
+    config = SandboxConfig()
+    if args.config:
+        config = SandboxConfig.model_validate_json(
+            pathlib.Path(args.config).read_text()
+        )
+    client = None
+    if args.mcp_stdio or args.mcp_server:
+        client = MCPClient(
+            stdio_command=args.mcp_stdio, server_url=args.mcp_server
+        )
+        client.start()
+    try:
+        with Sandbox(config, client, persistent=True) as sandbox:
+            _repl(sandbox)
+    finally:
+        if client:
+            client.close()
+
+
 if __name__ == "__main__":
-    pass
+    main()

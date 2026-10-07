@@ -58,21 +58,14 @@ def context() -> SWEBenchToolContext:
     """Lazy-loads the context based on your exact layout."""
     global ctx
     if ctx is None:
-        # 1. Parse the task file if it exists
         task_file_value = os.environ.get("AGENT_SMITH_TASK_FILE")
         task_file = Path(task_file_value) if task_file_value else None
         task: dict = {}
         if task_file and task_file.exists():
             task = json.loads(task_file.read_text())
-
-        # 2. Determine the path to the codebase workspace inside this container
         root_value = os.environ.get("AGENT_SMITH_TESTBED_PATH")
         workspace_path = Path(root_value) if root_value else Path("/testbed")
-
-        # 3. Instantiate your HostBackend
         backend = HostBackend(workspace_path)
-
-        # 4. Instantiate the wrapper context
         ctx = SWEBenchToolContext(
             task_file=task_file,
             backend=backend,
@@ -82,7 +75,6 @@ def context() -> SWEBenchToolContext:
 
 
 def build_server():
-    # MCP v2 Migration: Import MCPServer instead of FastMCP
     from mcp.server.mcpserver import MCPServer
 
     mcp = MCPServer("agent-smith-swebench")
@@ -163,7 +155,6 @@ def main() -> None:
     args = parser.parse_args()
     transport = "streamable-http" if args.http else "stdio"
 
-    # MCP v2 Migration: run() handles transport allocation internally
     build_server().run(transport=transport)
 
 
