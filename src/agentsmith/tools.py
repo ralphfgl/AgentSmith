@@ -157,30 +157,91 @@ class DockerWorkspace:
 
     def __init__(
         self,
-        task: SWEBenchTaskInput,
+        image: str,
         *,
-        memory: str = "4g",
-        cpus: float = 2.0,
+        memory: str = "8g",
+        cpus: float = 4.0,
         pids_limit: int = 512,
-    ):
-        self.container = None
+        tmpfs_size: str = "512m",
+        container_id: str | None = None,
+    ) -> None:
+        if not image and not container_id:
+            raise ValueError("A Docker image or container_id is required")
+        self.image = image
+        self.memory = memory
+        self.cpus = cpus
+        self.pids_limit = pids_limit
+        self.tmpfs_size = tmpfs_size
+        self.container_id = container_id
+        self._docker = docker.from_env()
+        self._container = None
+        self._started_by_us = False
 
     def start(self) -> None:
-        pass
+        if self._container is not None:
+            return
+        if self.container_id:
+            try:
+                self._container = self._docker.containers.get(
+                    self.container_id
+                )
+                self._container.reload()
+                if self._container.status != "running":
+                    self._container.start()
+            except DockerException as e:
+                raise RuntimeError(
+                    f"Could not connect to container {self.container_id}: {e}"
+                ) from e
+            return
+        try:
+            self._container = self._docker.containers.run(
+                self.image,
+                command=["tail", "-f", "/dev/null"],
+                detach=True,
+                mem_limit=self.memory,
+                nano_cpus=int(self.cpus * 1_000_000_00),
+                pids_limit=self.pids_limit,
+                network_disabled=True,
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges:true"],
+                tmpfs={
+                    "/tmp/": (
+                        f"rw,noexec, nosuid,nodev,size={self.tmpfs_size}"
+                    )
+                },
+                volumes={},
+                remove=True,
+            )
+            self._started_by_us = True
+        except DockerException as e:
+            raise RuntimeError(
+                f"Could not start Docker conatainer from image {self.image!r}: {e}"
+            ) from e
 
-    def close(self) -> None:
-        pass
+    def stop(self) -> None:
+        if self._container is None:
+            return
+        if not self._started_by_us:
+            return
+        try:
+            self._container.remove(force=True)
+        except DockerException:
+            pass
+        finally:
+            self._container = None
 
     def __enter__(self) -> "DockerWorkspace":
         self.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
+        self.stop()
 
-    @staticmethod
-    def _decode_output(outpout) -> tuple[str, str]:
-        pass
+    @property
+    def container(self):
+        self.start()
+        assert self._container is not None
+        return self._container
 
     def exec(
         self,
@@ -397,7 +458,7 @@ class DockerWorkspace:
                             print(f"{path}:{line_nb} {line}")
                             count += 1
                             if count >= 500:
-                                print("\nsearch result limit reached")
+                                print("\n[search result limit reached]")
                                 raise SystemExit(0)
             """
         )
@@ -415,22 +476,30 @@ class DockerWorkspace:
         return truncate(stdout)
 
     # NOTE: Add those
-    def search_function_or_class_definition_in_code(
-        self, name: str
-    ) -> str:
-        """search python function and class definition"""
+    def search_function_or_class_definition_in_code(self, name: str) -> str:
+        """search one python function and class definition
+        using structural code analysis"""
 
         if not name:
             return "Name cannot be empty"
         code = _python_code(
-            # r"""
-            # """
+            r"""
             import ast
             import os
             import pathlib
             import sys
+
             target = sys.argv[1]
-            ignored = {".git", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".tox", ".ruff_cache"}
+            ignored = {
+                ".git",
+                ".venv",
+                "venv",
+                "__pycache__",
+                ".mypy_cache",
+                ".pytest_cache",
+                ".tox",
+                ".ruff_cache",
+            }
             found = 0
             for root, dirs, files in os.walk("/testbed"):
                 dirs[:] = [d for d in dirs if d not in ignored]
@@ -439,17 +508,153 @@ class DockerWorkspace:
                         continue
                     path = pathlib.Path(root) / file
                     try:
-                        
-            
-
+                        source = path.read_text(encoding="utf-8", errors="replace")
+                        tree = ast.parse(source, filename=str(path))
+                    except (OSError, SyntaxError, UnicodeError):
+                        continue
+                    for node in ast.walk(tree):
+                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            if node.name != target:
+                                continue
+                            kind = (
+                                "async function"
+                                if isinstance(node, ast.AsyncFunctionDef)
+                                else "function"
+                            )
+                            print(f"{path}:{node.lineno}: {kind}: {node.name}")
+                            found += 1
+                        elif isinstance(node, ast.ClassDef):
+                            if node.name != target:
+                                continue
+                            print(f"{path}:{node.lineno}: class {node.name}")
+                            found += 1
+            if found == 0:
+                print(f"No function or class definition name {target!r} found")
+            """
         )
+        exit_code, stdout, stderr = self.exec(
+            ["python", "-c", code, name], timeout=90
+        )
+        if exit_code != 0:
+            return truncate(
+                stdout
+                or stderr
+                or f"definition search failed with exit_code={exit_code}"
+            )
+        return truncate(stdout)
 
-    def find_references(self, name: str, filepath: str, line) -> str: ...
+    def find_references(self, name: str, filepath: str, line: int) -> str:
+        """Find all the references to a symbol, filter the original reference"""
 
-    #############
+        if not name:
+            return "name cannot be empty"
+        if line < 0:
+            return "line must be >= 0"
+        source_filepath = ""
+        if filepath:
+            source_filepath = str(_normalize_testbed_path(filepath))
+        code = _python_code(
+            r"""
+            import ast
+            import os
+            import pathlib
+            import sys
+            target = sys.argv[1]
+            origin_file = sys.argv[2]
+            origin_line = int(sys.argv[3])
+            target = sys.argv[1]
+            ignored = {
+            ".git",
+            ".venv",
+            "venv",
+            "__pycache__",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".tox",
+            ".ruff_cache",
+            }
+            found = 0
+            def is_reference(node):
+                if isinstance(node, ast.Name):
+                    return node.id == target
+                if isinstance(node, ast.Attribute):
+                    return node.attr == target
+                return False
+            for root, dirs, files in os.walk("/testbed"):
+            dirs[:] = [d for d in dirs if d not in ignored]
+            for file in files:
+                if not file.endswith(".py"):
+                    continue
+                path = pathlib.Path(root) / file
+                try:
+                    source = path.read_text(encoding="utf-8", errors="replace")
+                    tree = ast.parse(source, filename=str(path))
+                except (OSError, SyntaxError, UnicodeError):
+                    continue
+                for node in ast.walk(tree):
+                    if not is_reference(node):
+                        continue
+                    node_line = getattr(node, "lineno", 0)
+                    if str(path) == origin_file and node_line == origin_line:
+                        continue
+                    print(f"{path}:{node_line}: {target}")
+                    found +=1
+                    if found >= 500:
+                        print("\n[reference result limit reached]")
+                        raise SystemExit(0)
+            if found == 0:
+                print(f"No references to {target!r} found")
+            """
+        )
+        exit_code, stdout, stderr = self.exec(
+            ["python", "-c", code, name, source_filepath, str(line)],
+            timeout=90,
+        )
+        if exit_code != 0:
+            return truncate(
+                stdout
+                or stderr
+                or f"reference search failed with exit_code={exit_code}"
+            )
+        return truncate(stdout)
 
-    def run_tests(self) -> str: ...
+    def run_command(self, command: str, workdir: str = "/testbed") -> str:
+        """Execute shell command."""
 
-    def get_patch(self) -> str: ...
+        workdir = str(_normalize_testbed_path(workdir))
+        exit_code, stdout, stderr = self.exec(
+            ["/bin/bash", "-lc", command], workdir=workdir
+        )
+        output_parts = []
+        if stdout:
+            output_parts.append("stdout:\n" + stdout)
+        if stderr:
+            output_parts.append("stderr:\n" + stderr)
+        output_parts.append(f"exit_code: {exit_code}")
+        return truncate("\n\n".join(output_parts))
 
-    def run_command(self, command: str, workdir: str = "/testbed") -> str: ...
+    def run_tests(self) -> str:
+        """Execute the evaluation script"""
+
+        # if self.eval_script:
+        #     command = self.eval_script.strip()
+        # return self.run_command(command, workdir="/testbed", timeout=300)
+
+    def get_patch(self) -> str:
+        """Return the git diff representing the agents changes"""
+
+        exit_code, stdout, stderr = self.exec(
+            ["git", "-c", "core.fileMode=false", "diff", "--no-ext-diff"],
+            workdir="/testbed",
+            timeout=60,
+        )
+        if exit_code != 0:
+            return truncate(
+                "git diff failed.\n\n"
+                + stdout
+                + stderr
+                + f"exit_code: {exit_code}"
+            )
+        if not stdout.strip():
+            return "No git diff"
+        return truncate(stdout)
