@@ -273,7 +273,7 @@ def run_swebench_agent(
     started = time.perf_counter()
     task = SWEBenchTaskInput.model_validate_json(task_file.read_text())
     env = os.environ.copy()
-    env["AGENT_SMITH_TASK_FILE"] = str(task_file.resolve())
+    env["AGENT_SMITH_TASK_FILE"] = task.model_dump_json()
     mcp = MCPClient(
         stdio_command=_create_command("mcp_tools_swebench.py"), env=env
     )

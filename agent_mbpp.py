@@ -1,4 +1,4 @@
-"""For `python -m agent_mbpp`."""
+"""For python -m agent_mbpp"""
 
 from agentsmith.cli_mbpp import main
 

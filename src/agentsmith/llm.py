@@ -83,9 +83,14 @@ class LLMClient:
                     timeout=self.config.timeout_seconds,
                 )
                 if response.status_code != 200:
-                    exc = requests.exceptions.HTTPError(response=response)
-                    raise exc
-
+                    try:
+                        error_body = response.json()
+                    except ValueError:
+                        error_body = response.text
+                    raise requests.exceptions.HTTPError(
+                        f"HTTP {response.status_code}: {error_body}",
+                        response=response,
+                    )
                 latency_ms = (time.perf_counter() - started) * 1000
                 parsed = response.json()  # Native JSON parsing
 

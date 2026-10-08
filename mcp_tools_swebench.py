@@ -1,145 +1,144 @@
-"""MCP server exposing mandatory SWE-bench tools running inside a Host/Container sandbox."""
+"""MCP server exposing SWE-bench task tools."""
 
 from __future__ import annotations
 
 import argparse
-import json
-import os
-from pathlib import Path
 
-# Fix the import path to match your exact directory structure
-from src.tools import HostBackend
-
-
-# Define a simple context structure to hold configuration since we don't have SWEBenchToolContext
-class SWEBenchToolContext:
-    def __init__(
-        self, task_file: Path | None, backend: HostBackend, eval_script: str
-    ):
-        self.task_file = task_file
-        self.backend = backend
-        self.eval_script = eval_script
-
-    # Forward the tool calls directly to your HostBackend implementation
-    def read_file(self, *args, **kwargs):
-        return self.backend.read_file(*args, **kwargs)
-
-    def edit_file(self, *args, **kwargs):
-        return self.backend.edit_file(*args, **kwargs)
-
-    def list_files(self, *args, **kwargs):
-        return self.backend.list_files(*args, **kwargs)
-
-    def search_code(self, *args, **kwargs):
-        return self.backend.search_code(*args, **kwargs)
-
-    def search_definition(self, *args, **kwargs):
-        return self.backend.search_definition(*args, **kwargs)
-
-    def find_references(self, *args, **kwargs):
-        return self.backend.find_references(*args, **kwargs)
-
-    def run_command(self, *args, **kwargs):
-        return self.backend.run_command(*args, **kwargs)
-
-    def get_patch(self, *args, **kwargs):
-        return self.backend.get_patch(*args, **kwargs)
-
-    def run_tests(self, timeout: int = 300) -> str:
-        return self.backend.run_tests(
-            eval_script=self.eval_script, timeout=timeout
-        )
+from agentsmith.tools import SWEBenchToolContext
 
 
 ctx: SWEBenchToolContext | None = None
 
 
 def context() -> SWEBenchToolContext:
-    """Lazy-loads the context based on your exact layout."""
     global ctx
     if ctx is None:
-        task_file_value = os.environ.get("AGENT_SMITH_TASK_FILE")
-        task_file = Path(task_file_value) if task_file_value else None
-        task: dict = {}
-        if task_file and task_file.exists():
-            task = json.loads(task_file.read_text())
-        root_value = os.environ.get("AGENT_SMITH_TESTBED_PATH")
-        workspace_path = Path(root_value) if root_value else Path("/testbed")
-        backend = HostBackend(workspace_path)
-        ctx = SWEBenchToolContext(
-            task_file=task_file,
-            backend=backend,
-            eval_script=task.get("eval_script", ""),
-        )
+        ctx = SWEBenchToolContext.from_env()
     return ctx
 
 
 def build_server():
-    from mcp.server.mcpserver import MCPServer
+    try:
+        from mcp.server.mcpserver import MCPServer
 
-    mcp = MCPServer("agent-smith-swebench")
+        mcp = MCPServer("agent-smith-swebench")
+    except ModuleNotFoundError:
+        from mcp.server.fastmcp import FastMCP
+
+        mcp = FastMCP("agent-smith-swebench")
 
     @mcp.tool()
     def read_file(
-        filepath: str, start_line: int = 1, end_line: int = 200
+        filepath: str,
+        start_line: int = 1,
+        end_line: int = 200,
     ) -> str:
-        """Read a file with line numbers, similar to cat -n."""
-        return context().read_file(filepath, start_line, end_line)
+        """Read a range of lines from a file in the SWE-bench testbed."""
+
+        return context().read_file(
+            filepath=filepath,
+            start_line=start_line,
+            end_line=end_line,
+        )
 
     @mcp.tool()
-    def edit_file(filepath: str, old_str: str, new_str: str) -> str:
-        """Replace exactly one old_str occurrence in filepath with new_str."""
-        return context().edit_file(filepath, old_str, new_str)
+    def edit_file(
+        filepath: str,
+        old_str: str,
+        new_str: str,
+    ) -> str:
+        """Replace old_str with new_str in a file."""
+
+        return context().edit_file(
+            filepath=filepath,
+            old_str=old_str,
+            new_str=new_str,
+        )
 
     @mcp.tool()
-    def list_files(directory: str = "/testbed", pattern: str = "*.py") -> str:
-        """List files in a directory matching a glob pattern."""
-        return context().list_files(directory, pattern)
+    def list_files(
+        directory: str = "/testbed",
+        pattern: str = "",
+    ) -> str:
+        """List files in the SWE-bench testbed."""
+
+        return context().list_files(
+            directory=directory,
+            pattern=pattern,
+        )
 
     @mcp.tool()
-    def search_code(pattern: str, file_pattern: str = "*.py") -> str:
-        """Search code using a grep-like regex pattern."""
-        return context().search_code(pattern, file_pattern)
+    def search_code(
+        pattern: str,
+        file_pattern: str = "*.py",
+    ) -> str:
+        """Search source code in the SWE-bench testbed."""
+
+        return context().search_code(
+            pattern=pattern,
+            file_pattern=file_pattern,
+        )
 
     @mcp.tool()
-    def search_function_or_class_definition_in_code(name: str) -> str:
-        """Find function or class definitions by name."""
-        return context().search_definition(name)
+    def search_function_or_class_definition_in_code(
+        name: str,
+    ) -> str:
+        """Find function or class definitions matching a name."""
+
+        return context().search_function_or_class_definition_in_code(
+            name=name,
+        )
 
     @mcp.tool()
-    def find_references(name: str, filepath: str = "", line: int = 0) -> str:
-        """Find references to a symbol name."""
-        return context().find_references(name, filepath, line)
+    def find_references(
+        name: str,
+        filepath: str,
+        line: int,
+    ) -> str:
+        """Find references to a symbol near a specific location."""
+
+        return context().find_references(
+            name=name,
+            filepath=filepath,
+            line=line,
+        )
 
     @mcp.tool()
     def run_tests() -> str:
-        """Execute the SWE-bench evaluation script or pytest fallback."""
+        """Run the SWE-bench evaluation script for the current task."""
+
         return context().run_tests()
 
     @mcp.tool()
     def get_patch() -> str:
-        """Return git -c core.fileMode=false diff for current repository changes."""
+        """Return the current git diff for the SWE-bench task."""
+
         return context().get_patch()
 
     @mcp.tool()
-    def run_command(command: str, workdir: str = "/testbed") -> str:
-        """Run a shell command in the given workdir and return stdout, stderr, exit code."""
-        return context().run_command(command, workdir)
+    def run_command(
+        command: str,
+        workdir: str = "/testbed",
+    ) -> str:
+        """Run a shell command inside the SWE-bench testbed."""
+
+        return context().run_command(
+            command=command,
+            workdir=workdir,
+        )
 
     @mcp.resource("agent://swebench/task")
     def task_resource() -> str:
-        """Expose the current task metadata as an MCP resource."""
-        task_file = context().task_file
-        return (
-            task_file.read_text() if task_file and task_file.exists() else "{}"
-        )
+        """Return the current SWE-bench task JSON."""
+
+        return context().describe_task()
 
     @mcp.prompt()
-    def swebench_debugger() -> str:
-        """Provide a system prompt guideline for the agent workflow."""
+    def swebench_solver() -> str:
         return (
-            "Explore the repository with read_file/search_code, make minimal edits, "
-            "run focused tests, then call final_answer(get_patch())."
+            "Solve the SWE-bench task by inspecting the repository, "
+            "searching for relevant code, editing the files, running tests, "
+            "and then calling get_patch() to return the final git patch."
         )
 
     return mcp
@@ -153,9 +152,18 @@ def main() -> None:
         help="serve streamable HTTP instead of stdio",
     )
     args = parser.parse_args()
-    transport = "streamable-http" if args.http else "stdio"
 
+    transport = "streamable-http" if args.http else "stdio"
     build_server().run(transport=transport)
+
+    # For HTTP:
+    #
+    # build_server().run(
+    #     transport="streamable-http",
+    #     host="127.0.0.1",
+    #     port=8000,
+    #     streamable_http_path="/mcp",
+    # )
 
 
 if __name__ == "__main__":

@@ -71,8 +71,7 @@ to run with openrouter:
 uv run python -m agent_mbpp   --env-file .env --task-file cache/mbpp_task.json   --output cache/mbpp_solution.json   --model-name "google/gemma-4-31b-it:free"  --provider-url "https://openrouter.ai/api/v1"
 
 to run with groq:
-uv run python -m agent_mbpp   --env-file .env --task-file cache/mbpp_task.json   --output cache/mbpp_solution.json   --model-name "openai/gpt-oss-120b"  --provider-url "http
-s://api.groq.com/openai/v1"
+uv run python -m agent_mbpp   --env-file .env --task-file cache/mbpp_task.json   --output cache/mbpp_solution.json   --model-name "openai/gpt-oss-120b"  --provider-url "https://api.groq.com/openai/v1"
 
 
 to use podman at 42:
@@ -89,3 +88,6 @@ LAUNCH http server:
 AGENT_SMITH_TASK_FILE=cache/mbpp_task.json uv run python mcp_tools_mbpp.py --http
 LAUNCH sandbox with htpp client:
 uv run sandbox --mcp-server http://127.0.0.1:8000/mcp
+
+to test in review:
+uv run python -m agent_swebench --env-file .env --task-file cache/swebench_task.json --output cache/swebench_solution.json --model-name "qwen/qwen3.8-27b"  --provider-url "https://api.groq.com/openai/v1" --max-iterations 3

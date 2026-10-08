@@ -12,7 +12,8 @@ import sys
 from pathlib import Path, PurePosixPath
 import docker
 from docker.errors import DockerException, NotFound
-from models import SWEBenchTaskInput
+from agentsmith.models import SWEBenchTaskInput
+import textwrap
 
 MAX_OUTPUT_CHARS = 20_000
 
@@ -21,12 +22,6 @@ def truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     if len(text) <= limit:
         return text
     return f"\n\n[output truncated: {len(text) - limit} characters omitted]"
-
-
-def definition_pattern(name: str) -> str: ...
-
-
-def reference_pattern(name: str) -> str: ...
 
 
 def run_subprocess(
@@ -149,7 +144,20 @@ def _normalize_testbed_path(path: str) -> PurePosixPath:
 
 def _python_code(code: str) -> str:
     """handle code indentation"""
-    return "\n".join(line.rstrip() for line in code.strip("\n").splitlines())
+
+    return textwrap.dedent(code).strip()
+
+
+def _strip_noise(text: str) -> str:
+    if not text:
+        return text
+    lines = [
+        ln
+        for ln in text.splitlines()
+        if not ln.startswith("Emulate Docker CLI using podman.")
+        and "Create /etc/containers/nodocker" not in ln
+    ]
+    return "\n".join(lines)
 
 
 class DockerWorkspace:
@@ -199,15 +207,13 @@ class DockerWorkspace:
                 command=["tail", "-f", "/dev/null"],
                 detach=True,
                 mem_limit=self.memory,
-                nano_cpus=int(self.cpus * 1_000_000_00),
+                nano_cpus=int(self.cpus * 1_000_000_000),
                 pids_limit=self.pids_limit,
                 network_disabled=True,
                 cap_drop=["ALL"],
                 security_opt=["no-new-privileges:true"],
                 tmpfs={
-                    "/tmp/": (
-                        f"rw,noexec, nosuid,nodev,size={self.tmpfs_size}"
-                    )
+                    "/tmp/": (f"rw,noexec,nosuid,nodev,size={self.tmpfs_size}")
                 },
                 volumes={},
                 remove=True,
@@ -251,34 +257,31 @@ class DockerWorkspace:
         timeout: int = 120,
     ) -> tuple[int, str, str]:
         """Execute command inside container"""
+        self.start()
 
-        container = self.container
+        assert self._container is not None
+        workdir = str(_normalize_testbed_path(workdir))
+        process = subprocess.Popen(
+            [
+                "docker",
+                "exec",
+                "-w",
+                workdir,
+                str(self._container.id),
+                *command,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         try:
-            result = container.exec_run(
-                command, workdir=workdir, stdout=True, stderr=True, demux=True
-            )
-        except DockerException as e:
-            raise RuntimeError(f"Docker exec failed: {e}") from e
-        exit_code = int(result.exit_code)
-        stdout_bytes: bytes
-        stderr_bytes: bytes
-        output = result.output
-        if output is None:
-            stdout_bytes = b""
-            stderr_bytes = b""
-        elif isinstance(output, tuple):
-            stdout_bytes = output[0] or b""
-            stderr_bytes = output[1] or b""
-        else:
-            stdout_bytes = output or b""
-            stderr_bytes = b""
-
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
-        return exit_code, stdout, stderr
-
-    def _path(self, filepath: str) -> str:
-        pass
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+            stderr += f"\nCommand timed out after {timeout} seconds"
+            return 124, stdout, stderr
+        return process.returncode, stdout, stderr
 
     # file operations
     def read_file(
@@ -308,7 +311,7 @@ class DockerWorkspace:
             lines = text.splitlines()
             start = min(start, len(lines) + 1)
             end = min(end, len(lines))
-            for nb in range(start, end + 1)
+            for nb in range(start, end + 1):
                 print(f"{nb}: {lines[nb - 1]}")
             """
         )
@@ -391,11 +394,11 @@ class DockerWorkspace:
             root = pathlib.Path(sys.argv[1])
             pattern = sys.argv[2]
             if not root.exists():
-            print(f"[ERROR] - directory do not exits: {root}")
-            raise SystemExit(2)
+                print(f"[ERROR] - directory do not exits: {root}")
+                raise SystemExit(2)
             if not root.is_dir():
-            print(f"[ERROR] - not a directory: {root}")
-            raise SystemExit(2)
+                print(f"[ERROR] - not a directory: {root}")
+                raise SystemExit(2)
             ignored = {".git", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".tox", ".ruff_cache"}
             for current, dirs, files in os.walk(root):
                 dirs[:] = [d for d in dirs if d not in ignored]
@@ -431,22 +434,22 @@ class DockerWorkspace:
             return f"invalid regex: {e}"
         code = _python_code(
             r"""
-            import fnmatch
             import os
             import fnmatch
             import pathlib
             import sys
-            import sys
+            import re
 
             pattern = sys.argv[1]
             file_pattern = sys.argv[2]
             regex = re.compile(pattern)
             ignored = {".git", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".tox", ".ruff_cache"}
             count = 0
-            for root, dirs, files in os.walk(root):
+            for root, dirs, files in os.walk("/testbed"):
                 dirs[:] = [d for d in dirs if d not in ignored]
                 for file in files:
-                    if not fnmatch.fnmatch(file, file_pattern):
+                    rel = str(path.relative_to("/testbed"))
+                    if not (fnmatch.fnmatch(file, file_pattern) or fnmatch.fnmatch(rel, file_pattern)):
                         continue
                     path = pathlib.Path(root) / file
                     try:
@@ -618,12 +621,14 @@ class DockerWorkspace:
             )
         return truncate(stdout)
 
-    def run_command(self, command: str, workdir: str = "/testbed") -> str:
+    def run_command(
+        self, command: str, workdir: str = "/testbed", timeout: int = 120
+    ) -> str:
         """Execute shell command."""
 
         workdir = str(_normalize_testbed_path(workdir))
         exit_code, stdout, stderr = self.exec(
-            ["/bin/bash", "-lc", command], workdir=workdir
+            ["/bin/bash", "-lc", command], workdir=workdir, timeout=timeout
         )
         output_parts = []
         if stdout:
@@ -633,12 +638,14 @@ class DockerWorkspace:
         output_parts.append(f"exit_code: {exit_code}")
         return truncate("\n\n".join(output_parts))
 
-    def run_tests(self) -> str:
+    def run_tests(self, eval_script: str, timeout: int = 300) -> str:
         """Execute the evaluation script"""
 
-        # if self.eval_script:
-        #     command = self.eval_script.strip()
-        # return self.run_command(command, workdir="/testbed", timeout=300)
+        if not eval_script:
+            return "run_tests failed: the SWE-bench has no eval script"
+        return self.run_command(
+            eval_script, workdir="/testbed", timeout=timeout
+        )
 
     def get_patch(self) -> str:
         """Return the git diff representing the agents changes"""
@@ -658,3 +665,133 @@ class DockerWorkspace:
         if not stdout.strip():
             return "No git diff"
         return truncate(stdout)
+
+
+@dataclass
+class SWEBenchToolContext:
+    """MCP-facing SWE-bench context."""
+
+    task: SWEBenchTaskInput
+    workspace: DockerWorkspace
+
+    @classmethod
+    def from_task(
+        cls,
+        task: SWEBenchTaskInput,
+    ) -> "SWEBenchToolContext":
+        workspace = DockerWorkspace(
+            image=task.docker_image,
+            memory=os.environ.get(
+                "AGENT_SMITH_DOCKER_MEMORY",
+                "8g",
+            ),
+            cpus=float(
+                os.environ.get(
+                    "AGENT_SMITH_DOCKER_CPUS",
+                    "4",
+                )
+            ),
+            pids_limit=int(
+                os.environ.get(
+                    "AGENT_SMITH_DOCKER_PIDS",
+                    "512",
+                )
+            ),
+        )
+
+        return cls(
+            task=task,
+            workspace=workspace,
+        )
+
+    @classmethod
+    def from_env(cls) -> "SWEBenchToolContext":
+        task_file = os.environ.get("AGENT_SMITH_TASK_FILE")
+        if not task_file:
+            raise RuntimeError("AGENT_SMITH_TASK_FILE is not set.")
+
+        task = SWEBenchTaskInput.model_validate_json(task_file)
+        return cls.from_task(task)
+
+    def read_file(
+        self,
+        filepath: str,
+        start_line: int = 1,
+        end_line: int = 200,
+    ) -> str:
+        return self.workspace.read_file(
+            filepath,
+            start_line,
+            end_line,
+        )
+
+    def edit_file(
+        self,
+        filepath: str,
+        old_str: str,
+        new_str: str,
+    ) -> str:
+        return self.workspace.edit_file(
+            filepath,
+            old_str,
+            new_str,
+        )
+
+    def list_files(
+        self,
+        directory: str = "/testbed",
+        pattern: str = "",
+    ) -> str:
+        return self.workspace.list_files(
+            directory,
+            pattern,
+        )
+
+    def search_code(
+        self,
+        pattern: str,
+        file_pattern: str = "*.py",
+    ) -> str:
+        return self.workspace.search_code(
+            pattern,
+            file_pattern,
+        )
+
+    def search_function_or_class_definition_in_code(
+        self,
+        name: str,
+    ) -> str:
+        return self.workspace.search_function_or_class_definition_in_code(name)
+
+    def find_references(
+        self,
+        name: str,
+        filepath: str,
+        line: int,
+    ) -> str:
+        return self.workspace.find_references(
+            name,
+            filepath,
+            line,
+        )
+
+    def run_tests(self) -> str:
+        return self.workspace.run_tests(
+            eval_script=self.task.eval_script,
+        )
+
+    def get_patch(self) -> str:
+        return self.workspace.get_patch()
+
+    def run_command(
+        self,
+        command: str,
+        workdir: str = "/testbed",
+    ) -> str:
+        return self.workspace.run_command(
+            command,
+            workdir=workdir,
+        )
+
+    # def close(self) -> None:
+    #     self.workspace.stop()
