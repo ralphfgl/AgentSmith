@@ -91,3 +91,7 @@ uv run sandbox --mcp-server http://127.0.0.1:8000/mcp
 
 to test in review:
 uv run python -m agent_swebench --env-file .env --task-file cache/swebench_task.json --output cache/swebench_solution.json --model-name "qwen/qwen3.8-27b"  --provider-url "https://api.groq.com/openai/v1" --max-iterations 3
+
+
+systemctl --user enable --now podman.socket
+export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock

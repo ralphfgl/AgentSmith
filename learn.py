@@ -236,3 +236,9 @@
 #
 # # run create the event loop
 # asyncio.run(main())
+
+
+dicos = [{"test": 277, "sdlkfjkls": 235}, {"test": 250}, {"test": 3}]
+
+prix = [6, 3, 2, 4]
+print(min(dicos, key=lambda x: x["test"])["test"])

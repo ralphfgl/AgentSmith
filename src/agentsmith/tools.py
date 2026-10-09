@@ -338,8 +338,8 @@ class DockerWorkspace:
             import sys
 
             path = pathlib.Path(sys.argv[1])
-            old = int(sys.argv[2])
-            new = int(sys.argv[3])
+            old = str(sys.argv[2])
+            new = str(sys.argv[3])
             if not path.exists():
                 print(f"[ERROR] - file do not exist {path}")
                 raise SystemExit(2)
@@ -409,7 +409,7 @@ class DockerWorkspace:
                     if not pattern:
                         matched = True
                     else:
-                        matched = fnmatch.fnmatch(file, pattern) or fnmatch(relative_text, pattern)
+                        matched = fnmatch.fnmatch(file, pattern) or fnmatch.fnmatch(relative_text, pattern)
                     if matched:
                         print(f"/testbed/{relative_text}")
             """
@@ -448,10 +448,10 @@ class DockerWorkspace:
             for root, dirs, files in os.walk("/testbed"):
                 dirs[:] = [d for d in dirs if d not in ignored]
                 for file in files:
+                    path = pathlib.Path(root) / file
                     rel = str(path.relative_to("/testbed"))
                     if not (fnmatch.fnmatch(file, file_pattern) or fnmatch.fnmatch(rel, file_pattern)):
                         continue
-                    path = pathlib.Path(root) / file
                     try:
                         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
                     except OSError:
