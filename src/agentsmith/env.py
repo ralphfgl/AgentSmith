@@ -39,6 +39,16 @@ def api_keys_for_provider(provider_url: str) -> list[str]:
         env_names.append("OPENROUTER_API_KEY")
     elif "groq" in lower_url:
         env_names.append("GROQ_API_KEY")
+    elif "together" in lower_url:
+        env_names.append("TOGETHER_API_KEY")
+    elif "mistral" in lower_url:
+        env_names.append("MISTRAL_API_KEY")
+    elif "fireworks" in lower_url:
+        env_names.append("FIREWORKS_API_KEY")
+    elif "cohere" in lower_url:
+        env_names.append("COHERE_API_KEY")
+    elif "google" in lower_url or "generativelanguage" in lower_url:
+        env_names.append("GOOGLE_API_KEY")
     elif "openai" in lower_url:
         env_names.append("OPENAI_API_KEY")
 

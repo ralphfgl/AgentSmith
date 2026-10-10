@@ -240,7 +240,6 @@ def run_mbpp_agent(
             started=started,
         )
     except Exception as exc:
-        pass
         manual = "Sandbox manual unavailable because MCP startup failed."
         system_prompt = mbpp_system_prompt(manual)
         solution = _failure_solution(
