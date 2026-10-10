@@ -18,14 +18,9 @@ def context() -> SWEBenchToolContext:
 
 
 def build_server():
-    try:
-        from mcp.server.mcpserver import MCPServer
+    from mcp.server.fastmcp import FastMCP
 
-        mcp = MCPServer("agent-smith-swebench")
-    except ModuleNotFoundError:
-        from mcp.server.fastmcp import FastMCP
-
-        mcp = FastMCP("agent-smith-swebench")
+    mcp = FastMCP("agent-smith-swebench")
 
     @mcp.tool()
     def read_file(

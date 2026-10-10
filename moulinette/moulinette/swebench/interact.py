@@ -24,6 +24,7 @@ def get_system_arch() -> str:
 
 class Difficulty(str, Enum):
     """SWE-bench task difficulty levels."""
+
     LESS_THAN_15_MIN = "<15 min fix"
     MIN_15_TO_1_HOUR = "15 min - 1 hour"
     HOURS_1_TO_4 = "1-4 hours"
@@ -47,7 +48,10 @@ EXAM_POOL = SEED_POOL + [
 ]
 
 from swebench.harness.test_spec.test_spec import make_test_spec
-from swebench.harness.docker_utils import copy_to_container, exec_run_with_timeout
+from swebench.harness.docker_utils import (
+    copy_to_container,
+    exec_run_with_timeout,
+)
 from swebench.harness.constants import (
     DOCKER_PATCH,
     DOCKER_WORKDIR,
@@ -89,11 +93,11 @@ class InteractSweBench:
     # Run the evaluation script inside the container
     python -m moulinette eval sympy__sympy-23534
     """
-    
+
     # Docker image configuration (can be overridden)
     DEFAULT_NAMESPACE = "swebench"
     DEFAULT_TAG = "latest"
-    
+
     def __init__(
         self,
         namespace: str = DEFAULT_NAMESPACE,
@@ -101,7 +105,7 @@ class InteractSweBench:
         tag: str = DEFAULT_TAG,
     ):
         """Initialize with configurable Docker image settings.
-        
+
         Parameters
         ----------
         namespace : str
@@ -116,7 +120,13 @@ class InteractSweBench:
         self.arch = arch if arch is not None else get_system_arch()
         self.tag = tag
 
-    def _image_name(self, instance_id: str, arch: Optional[str] = None, tag: Optional[str] = None, namespace: Optional[str] = None) -> str:
+    def _image_name(
+        self,
+        instance_id: str,
+        arch: Optional[str] = None,
+        tag: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> str:
         arch = arch or self.arch
         tag = tag or self.tag
         namespace = namespace or self.namespace
@@ -124,19 +134,33 @@ class InteractSweBench:
         key = key.replace("__", "_1776_")
         return f"{namespace}/{key}"
 
-    def _get_eval_script(self, instance_id: str, dataset: str = DEFAULT_DATASET, split: str = DEFAULT_SPLIT) -> str:
+    def _get_eval_script(
+        self,
+        instance_id: str,
+        dataset: str = DEFAULT_DATASET,
+        split: str = DEFAULT_SPLIT,
+    ) -> str:
         """Helper to get eval script for an instance."""
         ds = load_swebench_dataset(dataset, split, [instance_id])
         if not ds:
-            raise SystemExit(f"Instance {instance_id} not found in dataset {dataset}/{split}")
+            raise SystemExit(
+                f"Instance {instance_id} not found in dataset {dataset}/{split}"
+            )
         test_spec = make_test_spec(ds[0])
         return test_spec.eval_script
 
-    def _get_test_spec(self, instance_id: str, dataset: str = DEFAULT_DATASET, split: str = DEFAULT_SPLIT):
+    def _get_test_spec(
+        self,
+        instance_id: str,
+        dataset: str = DEFAULT_DATASET,
+        split: str = DEFAULT_SPLIT,
+    ):
         """Helper to get test_spec for an instance."""
         ds = load_swebench_dataset(dataset, split, [instance_id])
         if not ds:
-            raise SystemExit(f"Instance {instance_id} not found in dataset {dataset}/{split}")
+            raise SystemExit(
+                f"Instance {instance_id} not found in dataset {dataset}/{split}"
+            )
         return make_test_spec(ds[0])
 
     def image_name(self, instance_id: str) -> str:
@@ -146,7 +170,9 @@ class InteractSweBench:
     def list_instances(
         self,
         repo_pattern: str = "sympy|requests|django|scikit-learn|pydata",
-        difficulty: Union[str, List[str], Difficulty, List[Difficulty]] = Difficulty.LESS_THAN_15_MIN,
+        difficulty: Union[
+            str, List[str], Difficulty, List[Difficulty]
+        ] = Difficulty.LESS_THAN_15_MIN,
         dataset: str = DEFAULT_DATASET,
         split: str = DEFAULT_SPLIT,
         sort_by_patch_length: bool = False,
@@ -187,13 +213,20 @@ class InteractSweBench:
             by additional filtered matches.
         """
         import re
+
         pattern = re.compile(repo_pattern, re.IGNORECASE)
 
         # Normalize difficulty to a set of string values
         if isinstance(difficulty, (str, Difficulty)):
-            difficulties = {difficulty.value if isinstance(difficulty, Difficulty) else difficulty}
+            difficulties = {
+                difficulty.value
+                if isinstance(difficulty, Difficulty)
+                else difficulty
+            }
         else:
-            difficulties = {d.value if isinstance(d, Difficulty) else d for d in difficulty}
+            difficulties = {
+                d.value if isinstance(d, Difficulty) else d for d in difficulty
+            }
 
         ds = load_swebench_dataset(dataset, split)
 
@@ -201,7 +234,8 @@ class InteractSweBench:
         matching_instances = [
             inst
             for inst in ds
-            if pattern.search(inst.get("repo", "")) and inst.get("difficulty") in difficulties
+            if pattern.search(inst.get("repo", ""))
+            and inst.get("difficulty") in difficulties
         ]
 
         # Sort by patch length or shuffle
@@ -218,7 +252,9 @@ class InteractSweBench:
         seed_set = set(SEED_POOL)
         if exclude_exam_pool:
             # Exclude all exam pool tasks
-            result = [inst_id for inst_id in filtered_ids if inst_id not in exam_set]
+            result = [
+                inst_id for inst_id in filtered_ids if inst_id not in exam_set
+            ]
         else:
             # Seed pool first, then fill with filtered matches
             result = list(SEED_POOL)
@@ -234,7 +270,12 @@ class InteractSweBench:
             print(inst_id)
         return result
 
-    def get_instance_info(self, instance_id: str, dataset: str = DEFAULT_DATASET, split: str = DEFAULT_SPLIT):
+    def get_instance_info(
+        self,
+        instance_id: str,
+        dataset: str = DEFAULT_DATASET,
+        split: str = DEFAULT_SPLIT,
+    ):
         """Get instance details: instance_id, problem_statement, eval.sh content, dockerhub_image_name.
 
         Parameters
@@ -246,7 +287,9 @@ class InteractSweBench:
         """
         ds = load_swebench_dataset(dataset, split, [instance_id])
         if not ds:
-            raise SystemExit(f"Instance {instance_id} not found in dataset {dataset}/{split}")
+            raise SystemExit(
+                f"Instance {instance_id} not found in dataset {dataset}/{split}"
+            )
         instance = ds[0]
         eval_script = self._get_eval_script(instance_id, dataset, split)
         dockerhub_name = self._image_name(instance_id)
@@ -267,13 +310,13 @@ class InteractSweBench:
             for k, v in result.items()
         }
         print(json.dumps(result_clean, indent=2, ensure_ascii=False))
-        
+
         # Print eval_script separately with actual newlines and no \r
         print("\n--- eval_script ---")
         eval_script_clean = eval_script.replace("\r", "")
         print(eval_script_clean)
         print("--- end eval_script ---\n")
-        
+
         return result
 
     def get_container_id(self, instance_id: str, auto_start: bool = True):
@@ -296,7 +339,10 @@ class InteractSweBench:
         instance_id_lower = instance_id.lower()
         for container in containers:
             # Check if container name or image contains instance_id
-            if instance_id_lower in container.name.lower() or instance_id_lower in str(container.image).lower():
+            if (
+                instance_id_lower in container.name.lower()
+                or instance_id_lower in str(container.image).lower()
+            ):
                 print(container.id, file=sys.stdout)
                 return container.id
         # Also try to find by image name pattern
@@ -305,21 +351,24 @@ class InteractSweBench:
             if img_name in str(container.image):
                 print(container.id, file=sys.stdout)
                 return container.id
-        
+
         # No running container found
         if not auto_start:
             print("No running container found", file=sys.stderr)
             return None
-        
+
         # Check if image exists locally, pull if needed
         print(f"No running container found for {instance_id}", file=sys.stderr)
         try:
             client.images.get(img_name)
             print(f"Image {img_name} found locally", file=sys.stderr)
         except docker.errors.ImageNotFound:
-            print(f"Image {img_name} not found locally, pulling from DockerHub...", file=sys.stderr)
+            print(
+                f"Image {img_name} not found locally, pulling from DockerHub...",
+                file=sys.stderr,
+            )
             self.pull(instance_id)
-        
+
         # Start a new container
         print("Starting new container...", file=sys.stderr)
         container_id = self.start_container(instance_id, quiet=True)
@@ -354,9 +403,13 @@ class InteractSweBench:
             return container.id
         else:
             print(container.id)
-            print(f"Container {container.id} started. Use this ID to connect with:")
+            print(
+                f"Container {container.id} started. Use this ID to connect with:"
+            )
             print(f"  docker exec -it {container.id} bash")
-            print(f"Or use: python -m moulinette eval {instance_id} --container_id {container.id}")
+            print(
+                f"Or use: python -m moulinette eval {instance_id} --container_id {container.id}"
+            )
             return container.id
 
     def pull(self, instance_id: str):
@@ -364,13 +417,20 @@ class InteractSweBench:
         img = self._image_name(instance_id)
         print(f"Pulling {img} ...", file=sys.stderr)
         # Redirect docker pull output to stderr so it doesn't interfere with stdout
-        subprocess.run(["docker", "pull", img], check=True, stderr=sys.stderr, stdout=sys.stderr)
+        subprocess.run(
+            ["docker", "pull", img],
+            check=True,
+            stderr=sys.stderr,
+            stdout=sys.stderr,
+        )
         print("done", file=sys.stderr)
 
     def shell(self, instance_id: str):
         """Run an interactive bash shell in the container (foreground)."""
         img = self._image_name(instance_id)
-        subprocess.run(["docker", "run", "-it", "--rm", img, "bash"], check=False)
+        subprocess.run(
+            ["docker", "run", "-it", "--rm", img, "bash"], check=False
+        )
 
     def eval(
         self,
@@ -445,7 +505,9 @@ class InteractSweBench:
                     applied = True
                     break
             if not applied:
-                print(f"Warning: Failed to apply patch. Output: {result.output.decode('utf-8')}")
+                print(
+                    f"Warning: Failed to apply patch. Output: {result.output.decode('utf-8')}"
+                )
 
         # 4. Copy script into container and execute
         test_spec = self._get_test_spec(instance_id, dataset, split)
@@ -454,7 +516,9 @@ class InteractSweBench:
             tmp.write_text(eval_script)
             copy_to_container(container, tmp, Path("/eval.sh"))
             container.exec_run("chmod +x /eval.sh")
-            out, timed_out, runtime = exec_run_with_timeout(container, "/bin/bash /eval.sh", timeout)
+            out, timed_out, runtime = exec_run_with_timeout(
+                container, "/bin/bash /eval.sh", timeout
+            )
             print(out)
             print(f"Runtime: {runtime:.1f}s")
             if timed_out:
@@ -490,7 +554,9 @@ class InteractSweBench:
                 else EvalType.PASS_AND_FAIL
             )
 
-            report = get_eval_tests_report(eval_status_map, eval_ref, eval_type=eval_type)
+            report = get_eval_tests_report(
+                eval_status_map, eval_ref, eval_type=eval_type
+            )
             resolution_status = get_resolution_status(report)
 
             # Return True only if FULL resolution (all tests pass)
@@ -510,5 +576,5 @@ class InteractSweBench:
 def _fire_main():
     """Entry point for moulinette_swebench CLI."""
     import fire
-    fire.Fire(InteractSweBench)
 
+    fire.Fire(InteractSweBench)

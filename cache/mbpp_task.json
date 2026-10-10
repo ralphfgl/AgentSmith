@@ -1,10 +1,10 @@
 {
-  "task_id": 2,
-  "task_definition": "Write a function to find the similar elements from the given two tuple lists.",
-  "function_definition": "def similar_elements(test_tup1, test_tup2):",
+  "task_id": 436,
+  "task_definition": "Write a python function to print negative numbers in a list.",
+  "function_definition": "def neg_nos(list1):",
   "test_imports": [],
   "test_list": [
-    "assert set(similar_elements((1, 2, 3, 4),(5, 4, 3, 7))) == set((3, 4))",
-    "assert set(similar_elements((11, 12, 14, 13),(17, 15, 14, 13))) == set((13, 14))"
+    "assert neg_nos([-1,-2,3,4]) == [-1,-2]",
+    "assert neg_nos([-7,-6,8,9]) == [-7,-6]"
   ]
 }

@@ -15,14 +15,9 @@ def context() -> MBPPToolContext:
 
 
 def build_server():
-    try:
-        from mcp.server.mcpserver import MCPServer
+    from mcp.server.fastmcp import FastMCP
 
-        mcp = MCPServer("agent-smith-mbpp")
-    except ModuleNotFoundError:
-        from mcp.server.fastmcp import FastMCP
-
-        server = FastMCP("agent-smith-mbpp")
+    mcp = FastMCP("agent-smith-mbpp")
 
     @mcp.tool()
     def describe_task() -> str:

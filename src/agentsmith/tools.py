@@ -52,28 +52,51 @@ def run_subprocess(
 
 @dataclass
 class MBPPToolContext:
-    task_file: Path
+    task_file: Path | None
 
     @classmethod
     def from_env(cls) -> "MBPPToolContext":
         task_file = os.environ.get("AGENT_SMITH_TASK_FILE")
-        if not task_file:
-            raise RuntimeError(
-                "AGENT_SMITH_TASK_FILE is required for MBPP tools"
-            )
-        return cls(Path(task_file))
+        return cls(Path(task_file) if task_file else None)
 
     def task(self) -> dict:
+        if self.task_file is None:
+            raise RuntimeError(
+                "AGENT_SMITH_TASK_FILE is required for this tool"
+            )
         return json.loads(self.task_file.read_text())
 
-    def public_tests_source(self, test_list: list[str] | None) -> str:
-        task = self.task()
-        imports = "\n".join(task.get("test_imports") or [])
-        if not test_list:
-            tests = "\n".join(task.get("test_list") or [])
+    def public_tests_source(self, test_list: list[str] | None = None) -> str:
+        if self.task_file is None:
+            if not test_list:
+                raise RuntimeError("No task file and no test_list given")
+            task = {}
         else:
-            tests = "\n".join(test_list)
+            task = self.task()
+        imports = "\n".join(task.get("test_imports") or [])
+        tests = "\n".join(test_list or task.get("test_list") or [])
         return "\n".join(part for part in [imports, tests] if part)
+
+    # @classmethod
+    # def from_env(cls) -> "MBPPToolContext":
+    #     task_file = os.environ.get("AGENT_SMITH_TASK_FILE")
+    #     if not task_file:
+    #         raise RuntimeError(
+    #             "AGENT_SMITH_TASK_FILE is required for MBPP tools"
+    #         )
+    #     return cls(Path(task_file))
+    #
+    # def task(self) -> dict:
+    #     return json.loads(self.task_file.read_text())
+    #
+    # def public_tests_source(self, test_list: list[str] | None) -> str:
+    #     task = self.task()
+    #     imports = "\n".join(task.get("test_imports") or [])
+    #     if not test_list:
+    #         tests = "\n".join(task.get("test_list") or [])
+    #     else:
+    #         tests = "\n".join(test_list)
+    #     return "\n".join(part for part in [imports, tests] if part)
 
     def run_tests(
         self, code: str = "", test_list: list[str] | None = None
@@ -89,7 +112,6 @@ class MBPPToolContext:
                     "output": "No candidate code was provided.",
                 }
             )
-        task = self.task()
         test_source = self.public_tests_source(test_list)
         full_code = code + "\n" + test_source + "\n"
         with tempfile.NamedTemporaryFile(
@@ -478,7 +500,6 @@ class DockerWorkspace:
             return "No match found"
         return truncate(stdout)
 
-    # NOTE: Add those
     def search_function_or_class_definition_in_code(self, name: str) -> str:
         """search one python function and class definition
         using structural code analysis"""
@@ -515,21 +536,13 @@ class DockerWorkspace:
                         tree = ast.parse(source, filename=str(path))
                     except (OSError, SyntaxError, UnicodeError):
                         continue
+                    lines = source.splitlines()
                     for node in ast.walk(tree):
-                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            if node.name != target:
-                                continue
-                            kind = (
-                                "async function"
-                                if isinstance(node, ast.AsyncFunctionDef)
-                                else "function"
-                            )
-                            print(f"{path}:{node.lineno}: {kind}: {node.name}")
-                            found += 1
-                        elif isinstance(node, ast.ClassDef):
-                            if node.name != target:
-                                continue
-                            print(f"{path}:{node.lineno}: class {node.name}")
+                        if isinstance(
+                            node,
+                            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                        ) and node.name == target:
+                            print(f"{path}:{node.lineno}: {lines[node.lineno - 1].strip()}")
                             found += 1
             if found == 0:
                 print(f"No function or class definition name {target!r} found")
@@ -584,27 +597,27 @@ class DockerWorkspace:
                     return node.attr == target
                 return False
             for root, dirs, files in os.walk("/testbed"):
-            dirs[:] = [d for d in dirs if d not in ignored]
-            for file in files:
-                if not file.endswith(".py"):
-                    continue
-                path = pathlib.Path(root) / file
-                try:
-                    source = path.read_text(encoding="utf-8", errors="replace")
-                    tree = ast.parse(source, filename=str(path))
-                except (OSError, SyntaxError, UnicodeError):
-                    continue
-                for node in ast.walk(tree):
-                    if not is_reference(node):
+                dirs[:] = [d for d in dirs if d not in ignored]
+                for file in files:
+                    if not file.endswith(".py"):
                         continue
-                    node_line = getattr(node, "lineno", 0)
-                    if str(path) == origin_file and node_line == origin_line:
+                    path = pathlib.Path(root) / file
+                    try:
+                        source = path.read_text(encoding="utf-8", errors="replace")
+                        tree = ast.parse(source, filename=str(path))
+                    except (OSError, SyntaxError, UnicodeError):
                         continue
-                    print(f"{path}:{node_line}: {target}")
-                    found +=1
-                    if found >= 500:
-                        print("\n[reference result limit reached]")
-                        raise SystemExit(0)
+                    for node in ast.walk(tree):
+                        if not is_reference(node):
+                            continue
+                        node_line = getattr(node, "lineno", 0)
+                        if str(path) == origin_file and node_line == origin_line:
+                            continue
+                        print(f"{path}:{node_line}: {target}")
+                        found +=1
+                        if found >= 500:
+                            print("\n[reference result limit reached]")
+                            raise SystemExit(0)
             if found == 0:
                 print(f"No references to {target!r} found")
             """
@@ -671,7 +684,7 @@ class DockerWorkspace:
 class SWEBenchToolContext:
     """MCP-facing SWE-bench context."""
 
-    task: SWEBenchTaskInput
+    task: SWEBenchTaskInput | None
     workspace: DockerWorkspace
 
     @classmethod
@@ -704,14 +717,27 @@ class SWEBenchToolContext:
             workspace=workspace,
         )
 
+    # @classmethod
+    # def from_env(cls) -> "SWEBenchToolContext":
+    #     task_file = os.environ.get("AGENT_SMITH_TASK_FILE")
+    #     if not task_file:
+    #         raise RuntimeError("AGENT_SMITH_TASK_FILE is not set.")
+    #
+    #     task = SWEBenchTaskInput.model_validate_json(task_file)
+    #     return cls.from_task(task)
     @classmethod
     def from_env(cls) -> "SWEBenchToolContext":
-        task_file = os.environ.get("AGENT_SMITH_TASK_FILE")
-        if not task_file:
-            raise RuntimeError("AGENT_SMITH_TASK_FILE is not set.")
-
-        task = SWEBenchTaskInput.model_validate_json(task_file)
-        return cls.from_task(task)
+        task_json = os.environ.get("AGENT_SMITH_TASK_FILE")
+        if task_json:
+            return cls.from_task(
+                SWEBenchTaskInput.model_validate_json(task_json)
+            )
+        testbed = os.environ.get("TESTBED_PATH")
+        if testbed:
+            return cls(task=None, workspace=LocalWorkspace(testbed))
+        raise RuntimeError(
+            "Neither AGENT_SMITH_TASK_FILE nor TESTBED_PATH is set."
+        )
 
     def read_file(
         self,
@@ -775,10 +801,15 @@ class SWEBenchToolContext:
             line,
         )
 
+    # def run_tests(self) -> str:
+    #     return self.workspace.run_tests(
+    #         eval_script=self.task.eval_script,
+    #     )
+
     def run_tests(self) -> str:
-        return self.workspace.run_tests(
-            eval_script=self.task.eval_script,
-        )
+        if self.task is None:
+            return "run_tests unavailable: no SWE-bench task loaded (local testbed mode)"
+        return self.workspace.run_tests(eval_script=self.task.eval_script)
 
     def get_patch(self) -> str:
         return self.workspace.get_patch()
@@ -795,3 +826,67 @@ class SWEBenchToolContext:
 
     # def close(self) -> None:
     #     self.workspace.stop()
+
+
+class LocalWorkspace(DockerWorkspace):
+    """Runs the DockerWorkspace tool scripts on a local directory.
+
+    Used when no SWE-bench task is loaded and TESTBED_PATH is set (sandbox exam).
+    "/testbed" is mapped to TESTBED_PATH on the way in and back on the way out.
+    """
+
+    def __init__(self, root: str | Path) -> None:  # no docker.from_env()
+        self.root = Path(root).resolve()
+        if not self.root.is_dir():
+            raise RuntimeError(f"TESTBED_PATH is not a directory: {root}")
+
+    def start(self) -> None:
+        return
+
+    def stop(self) -> None:
+        return
+
+    def _to_local(self, text: str) -> str:
+        return text.replace("/testbed", str(self.root))
+
+    def _to_virtual(self, text: str) -> str:
+        return (text or "").replace(str(self.root), "/testbed")
+
+    def _local_arg(self, arg: str) -> str:
+        # map path-like args only when they point to something that exists
+        if arg == "/testbed" or arg.startswith("/testbed/"):
+            if Path(self._to_local(arg)).exists():
+                return self._to_local(arg)
+        return arg
+
+    def exec(
+        self,
+        command: list[str],
+        *,
+        workdir: str = "/testbed",
+        timeout: int = 120,
+    ) -> tuple[int, str, str]:
+        cwd = self._to_local(str(_normalize_testbed_path(workdir)))
+        cmd = list(command)
+        if cmd[0] == "python":
+            cmd[0] = sys.executable
+        if len(cmd) >= 3 and cmd[1] == "-c":  # python -c <code> <args...>
+            cmd[2] = self._to_local(cmd[2])
+            cmd[3:] = [self._local_arg(a) for a in cmd[3:]]
+        elif len(cmd) >= 3 and cmd[1] == "-lc":  # bash -lc <command>
+            cmd[2] = self._to_local(cmd[2])
+        else:
+            cmd = [cmd[0]] + [self._local_arg(a) for a in cmd[1:]]
+        try:
+            proc = subprocess.run(
+                cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            return 124, "", f"Command timed out after {timeout} seconds"
+        except OSError as e:
+            return 127, "", str(e)
+        return (
+            proc.returncode,
+            self._to_virtual(proc.stdout),
+            self._to_virtual(proc.stderr),
+        )

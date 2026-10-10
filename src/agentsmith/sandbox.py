@@ -121,25 +121,8 @@ class SandboxConfig(BaseModel):
     max_output_chars: int = 20_000
 
 
-# @dataclass
-# class SandboxConfig(BaseModel):
-#     """authorized import and timeout and memory limits"""
-#
-#     authorized_imports: list[str] = field(
-#         default_factory=lambda: list(DEFAULT_ALLOWED_IMPORTS)
-#     )
-#     allowed_directories: list[str] = field(
-#         default_factory=lambda: list(DEFAULT_ALLOWED_DIRS)
-#     )
-#     max_execution_time_seconds: int = (
-#         30  # wall clock alarm used for both SIGALRM and the parent poll
-#     )
-#     max_memory_mb: int = 512  # RLIMIT_AS/RLIMIT_DATA cap
-#     max_output_chars: int = 16_000  # cap for sdtout/err
-
-
 # custom exception used as a control-flow signal. raised by final_anser in sandbox and catched in _worker to extract the answer
-class FinalAnswerSignal(BaseException):
+class FinalAnswerSignal(Exception):
     """Control flow signal."""
 
     def __init__(self, answer: str):
@@ -669,12 +652,31 @@ def _is_incomplete(source: str) -> bool:
         return False  # real error: let the sandbox report it
 
 
+def _report(result) -> None:
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    if result.error:
+        print(f"[error] {result.error}", file=sys.stderr)
+    if result.final_answer is not None:
+        print(f"[final_answer] {result.final_answer}")
+
+
 def _repl(sandbox: Sandbox) -> None:
     print("Sandbox REPL. Type `exit` or Ctrl+D to quit.")
     print(
         "In a `...` block: empty line = run it, ESC then Enter (or Ctrl+C) = cancel it."
     )
     print(sandbox.manual())
+    if not sys.stdin.isatty():
+        source = sys.stdin.read()
+        if source.strip():
+            try:
+                _report(sandbox.execute(source, echo=True))
+            except KeyboardInterrupt:
+                print("\nInterrupted (sandbox state reset)")
+        return
     lines: list[str] = []
     while True:
         try:
@@ -704,6 +706,7 @@ def _repl(sandbox: Sandbox) -> None:
         except KeyboardInterrupt:  # Ctrl+C while running
             print("\nInterrupted (sandbox state reset)")
             continue
+        _report(sandbox.execute(source, echo=True))
         if result.stdout:
             print(
                 result.stdout, end="" if result.stdout.endswith("\n") else "\n"
@@ -721,12 +724,16 @@ def main() -> None:
     parser.add_argument("config", nargs="?", help="sandbox config JSON file")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--mcp-stdio", help='e.g. "python mcp_tools_mbpp.py"')
+    # group.add_argument(
+    #     "--mcp-server",
+    #     nargs="?",
+    #     const="http://127.0.0.1:8000/sse",
+    #     help="MCP server URL",
+    # )
     group.add_argument(
-        "--mcp-server",
-        nargs="?",
-        const="http://127.0.0.1:8000/sse",
-        help="MCP server URL",
+        "--mcp-server", default=None, help="MCP streamable HTTP server URL"
     )
+
     args = parser.parse_args()
 
     config = SandboxConfig()
