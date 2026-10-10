@@ -706,7 +706,6 @@ def _repl(sandbox: Sandbox) -> None:
         except KeyboardInterrupt:  # Ctrl+C while running
             print("\nInterrupted (sandbox state reset)")
             continue
-        _report(sandbox.execute(source, echo=True))
         if result.stdout:
             print(
                 result.stdout, end="" if result.stdout.endswith("\n") else "\n"
