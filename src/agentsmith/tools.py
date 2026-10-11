@@ -717,14 +717,6 @@ class SWEBenchToolContext:
             workspace=workspace,
         )
 
-    # @classmethod
-    # def from_env(cls) -> "SWEBenchToolContext":
-    #     task_file = os.environ.get("AGENT_SMITH_TASK_FILE")
-    #     if not task_file:
-    #         raise RuntimeError("AGENT_SMITH_TASK_FILE is not set.")
-    #
-    #     task = SWEBenchTaskInput.model_validate_json(task_file)
-    #     return cls.from_task(task)
     @classmethod
     def from_env(cls) -> "SWEBenchToolContext":
         task_json = os.environ.get("AGENT_SMITH_TASK_FILE")
