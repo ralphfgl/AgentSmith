@@ -259,9 +259,6 @@ See BENCHMARK_REPORT.md for more details
 
 ## How AI was used
 
-AI was used throughout this project, both as a coding assistant and as
-the thing being evaluated:
-
 Debugging provider quirks --- AI helped diagnose why GPT-OSS 120B kept
 failing with HTTP 400 (tool_choice=none but the model still emitted a
 tool call).
