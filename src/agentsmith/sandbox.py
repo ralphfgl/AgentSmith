@@ -719,39 +719,46 @@ def _repl(sandbox: Sandbox) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="sandbox")
-    parser.add_argument("config", nargs="?", help="sandbox config JSON file")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--mcp-stdio", help='e.g. "python mcp_tools_mbpp.py"')
-    # group.add_argument(
-    #     "--mcp-server",
-    #     nargs="?",
-    #     const="http://127.0.0.1:8000/sse",
-    #     help="MCP server URL",
-    # )
-    group.add_argument(
-        "--mcp-server", default=None, help="MCP streamable HTTP server URL"
-    )
-
-    args = parser.parse_args()
-
-    config = SandboxConfig()
-    if args.config:
-        config = SandboxConfig.model_validate_json(
-            pathlib.Path(args.config).read_text()
-        )
-    client = None
-    if args.mcp_stdio or args.mcp_server:
-        client = MCPClient(
-            stdio_command=args.mcp_stdio, server_url=args.mcp_server
-        )
-        client.start()
     try:
-        with Sandbox(config, client, persistent=True) as sandbox:
-            _repl(sandbox)
-    finally:
-        if client:
-            client.close()
+        parser = argparse.ArgumentParser(prog="sandbox")
+        parser.add_argument(
+            "config", nargs="?", help="sandbox config JSON file"
+        )
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument(
+            "--mcp-stdio", help='e.g. "python mcp_tools_mbpp.py"'
+        )
+        # group.add_argument(
+        #     "--mcp-server",
+        #     nargs="?",
+        #     const="http://127.0.0.1:8000/sse",
+        #     help="MCP server URL",
+        # )
+        group.add_argument(
+            "--mcp-server", default=None, help="MCP streamable HTTP server URL"
+        )
+
+        args = parser.parse_args()
+
+        config = SandboxConfig()
+        if args.config:
+            config = SandboxConfig.model_validate_json(
+                pathlib.Path(args.config).read_text()
+            )
+        client = None
+        if args.mcp_stdio or args.mcp_server:
+            client = MCPClient(
+                stdio_command=args.mcp_stdio, server_url=args.mcp_server
+            )
+            client.start()
+        try:
+            with Sandbox(config, client, persistent=True) as sandbox:
+                _repl(sandbox)
+        finally:
+            if client:
+                client.close()
+    except BaseException as e:
+        print(e)
 
 
 if __name__ == "__main__":

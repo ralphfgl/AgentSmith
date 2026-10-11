@@ -3,7 +3,6 @@
 import argparse
 from pathlib import Path
 
-import agentsmith
 from agentsmith.agent import run_mbpp_agent
 from agentsmith.env import load_env_file
 from agentsmith.models import SandboxConfig

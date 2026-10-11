@@ -60,9 +60,6 @@ def _failure_solution(
     )
 
 
-# NOTE: might need to use this two technique
-# Summarization: Having a secondary LLM call condense old tool outputs into a short "Memory Log".
-# State Tracking: Keeping an explicit file scratchpad or checklist in the system prompt that the agent updates dynamically (e.g., "Files edited so far: ...").
 def _trimmed(
     messages: list[dict[str, str]], history_pairs: int
 ) -> list[dict[str, str]]:

@@ -59,6 +59,9 @@ def main() -> None:
         help="serve streamable HTTP instead of stdio",
     )
     args = parser.parse_args()
+    import logging
+
+    logging.basicConfig(level=logging.WARNING)
     transport = "streamable-http" if args.http else "stdio"
     build_server().run(transport=transport)
     # build_server().run(
