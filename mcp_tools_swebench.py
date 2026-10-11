@@ -150,13 +150,9 @@ def _cleanup() -> None:
             pass
 
 
-def _on_term(signum, frame) -> None:
-    sys.exit(128 + signum)
-
-
 def main() -> None:
     atexit.register(_cleanup)
-    signal.signal(signal.SIGTERM, _on_term)
+    signal.signal(signal.SIGTERM, lambda signum, fram: sys.exit(143))
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--http",

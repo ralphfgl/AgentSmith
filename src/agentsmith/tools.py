@@ -816,8 +816,8 @@ class SWEBenchToolContext:
             workdir=workdir,
         )
 
-    # def close(self) -> None:
-    #     self.workspace.stop()
+    def close(self) -> None:
+        self.workspace.stop()
 
 
 class LocalWorkspace(DockerWorkspace):
