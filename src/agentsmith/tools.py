@@ -226,7 +226,7 @@ class DockerWorkspace:
         try:
             self._container = self._docker.containers.run(
                 self.image,
-                command=["tail", "-f", "/dev/null"],
+                command=["sleep", "1800"],
                 detach=True,
                 mem_limit=self.memory,
                 nano_cpus=int(self.cpus * 1_000_000_000),

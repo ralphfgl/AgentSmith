@@ -34,8 +34,8 @@ uv run python -m agent_mbpp \
   --env-file .env \
   --task-file cache/mbpp_task.json \
   --output cache/mbpp_solution.json \
-  --model-name "openai/gpt-oss-120b" \
-  --provider-url "https://api.groq.com/openai/v1"
+  --model-name "google/gemma-4-31b-it:free" \
+  --provider-url "https://openrouter.ai/api/v1"
 ```
 
 ### Run a SWE-bench task

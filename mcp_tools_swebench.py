@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import atexit
+import signal
+import sys
 
 from agentsmith.tools import SWEBenchToolContext
 
@@ -139,7 +142,21 @@ def build_server():
     return mcp
 
 
+def _cleanup() -> None:
+    if ctx is not None:
+        try:
+            ctx.workspace.stop()
+        except Exception:
+            pass
+
+
+def _on_term(signum, frame) -> None:
+    sys.exit(128 + signum)
+
+
 def main() -> None:
+    atexit.register(_cleanup)
+    signal.signal(signal.SIGTERM, _on_term)
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--http",
