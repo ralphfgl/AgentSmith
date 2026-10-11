@@ -27,6 +27,8 @@ uv sync
 cp .env.example .env  # then add your API keys
 ```
 
+You also need to add the moulinette repo and use uv sync on it.
+
 ### Run an MBPP task
 
 ``` bash
