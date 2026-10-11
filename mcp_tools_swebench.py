@@ -166,7 +166,10 @@ def main() -> None:
     args = parser.parse_args()
 
     transport = "streamable-http" if args.http else "stdio"
-    build_server().run(transport=transport)
+    try:
+        build_server().run(transport=transport)
+    finally:
+        _cleanup()
 
     # For HTTP:
     #
