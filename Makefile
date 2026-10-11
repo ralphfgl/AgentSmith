@@ -2,10 +2,11 @@ EVAL_DIR = evaluations
 
 clean:
 	@find . -name "__pycache__" -type d -exec rm -rf {} +
-	rm -rf src/.mypy_cache
 
-lint:
-	flake8 src/
-	mypy src/ --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
+setup:
+	systemctl --user enable --now podman.socket
+	export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
+	podman unshare
+
 
 .PHONY: clean

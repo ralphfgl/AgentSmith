@@ -27,6 +27,8 @@ uv sync
 cp .env.example .env  # then add your API keys
 ```
 
+You also need to add the moulinette repo and use uv sync on it.
+
 ### Run an MBPP task
 
 ``` bash
@@ -256,9 +258,6 @@ See BENCHMARK_REPORT.md for more details
 
 
 ## How AI was used
-
-AI was used throughout this project, both as a coding assistant and as
-the thing being evaluated:
 
 Debugging provider quirks --- AI helped diagnose why GPT-OSS 120B kept
 failing with HTTP 400 (tool_choice=none but the model still emitted a

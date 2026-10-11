@@ -14,8 +14,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task-file", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--model-name", required=True)
-    parser.add_argument("--provider-url", required=True)
+    parser.add_argument("--model-name", default="qwen/qwen3.8-27b")
+    parser.add_argument(
+        "--provider-url", default="https://api.groq.com/openai/v1"
+    )
     parser.add_argument("--api-key-env", default=None)
     parser.add_argument("--env-file", default=None)
     parser.add_argument("--sandbox-config", default=None)
