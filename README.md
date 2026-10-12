@@ -24,8 +24,9 @@ client with provider rotation, and a benchmark runner.
 git clone <repo>
 cd AgentSmith
 uv sync
-cp .env.example .env  # then add your API keys
+cp .env.example .env
 ```
+and then add you API keys
 
 You also need to add the moulinette repo and use uv sync on it.
 
